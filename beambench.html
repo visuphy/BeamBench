@@ -1,0 +1,73 @@
+<!DOCTYPE html>
+<!--
+  BeamBench Copyright (C) 2025 VisuPhy
+  SPDX-License-Identifier: GPL-3.0-or-later
+-->
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width,initial-scale=1" />
+<title>BeamBench</title>
+<link rel="icon" type="image/png" href="https://raw.githubusercontent.com/visuphy/visuphy.github.io/refs/heads/main/favicon.png">
+
+<script type="importmap">
+{
+  "imports": {
+    "three": "https://unpkg.com/three@0.161.0/build/three.module.js",
+    "three/addons/": "https://unpkg.com/three@0.161.0/examples/jsm/"
+  }
+}
+</script>
+
+<style>
+  html, body { margin:0; height:100%; background:#0d1117; color:#e6edf3; font-family: ui-sans-serif, system-ui, -apple-system, Segoe UI, Roboto, Inter, Arial;}
+  #app { position:fixed; inset:0; }
+  .hud {
+    position: fixed; left: 12px; bottom: 12px; background: rgba(0,0,0,.5);
+    color:#c9d1d9; padding: 8px 10px; border: 1px solid #30363d; border-radius: 8px; font-size: 12px; user-select:none;
+  }
+  .hud code { color:#7ee787; }
+  /* ---- Drag palette ---- */
+  .palette {
+    position: fixed; top: 12px; left: 12px; z-index: 20;
+    width: 220px; background: rgba(0,0,0,.55); border: 1px solid #30363d; border-radius: 10px;
+    padding: 8px; box-shadow: 0 6px 20px rgba(0,0,0,.25);
+  }
+  .palette h4 {
+    margin: 4px 6px 8px; font-size: 12px; color:#c9d1d9; font-weight: 700; letter-spacing:.02em;
+  }
+  .pal-list { display: grid; grid-template-columns: 1fr 1fr; gap: 6px; }
+  .pal-item {
+    display:block; padding: 6px 8px; font-size: 12px; text-align: center;
+    background:#161b22; color:#e6edf3; border:1px solid #30363d; border-radius: 8px; cursor: grab; user-select:none;
+  }
+  .pal-item:active { cursor: grabbing; }
+</style>
+</head>
+<body>
+  <div id="app"></div>
+  <div id="palette" class="palette">
+    <h4>Drag onto workspace</h4>
+    <div class="pal-list">
+      <button class="pal-item" data-type="source"      draggable="true">Gaussian Beam</button>
+      <button class="pal-item" data-type="lens"        draggable="true">Thin Lens</button>
+      <button class="pal-item" data-type="mirror"      draggable="true">Mirror</button>
+      <button class="pal-item" data-type="polarizer"   draggable="true">Polarizer</button>
+      <button class="pal-item" data-type="waveplate"   draggable="true">Waveplate</button>
+      <button class="pal-item" data-type="faraday"     draggable="true">Faraday</button>
+      <button class="pal-item" data-type="pbs"         draggable="true">PBS / BS</button>
+      <button class="pal-item" data-type="beamblock"   draggable="true">Beam Block</button>
+      <button class="pal-item" data-type="grating"     draggable="true">Grating</button>
+      <button class="pal-item" data-type="multimeter"  draggable="true">Detector</button>
+      <button class="pal-item" data-type="ruler"       draggable="true">Measurement Tool</button>
+    </div>
+  </div>
+  <div class="hud">
+    <div><b>BeamBench © 2025 <a href="https://github.com/visuphy" target="_blank" title="Visit VisuPhy on GitHub" style="color: #7ee787;">VisuPhy</a></b></div>
+    <div>Grid cell size: 10 mm x 10 mm</div>
+    <div>Orbit: Left drag • Pan: Right drag • Zoom: Wheel</div>
+  </div>
+
+  <script type="module" src="./main.js"></script>
+</body>
+</html>

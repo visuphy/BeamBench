@@ -1,0 +1,135 @@
+<!DOCTYPE html>
+<!--
+  BeamBench Copyright (C) 2025 VisuPhy
+  SPDX-License-Identifier: GPL-3.0-or-later
+-->
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>BeamBench - Introduction</title>
+    <link rel="icon" type="image/png" href="https://raw.githubusercontent.com/visuphy/visuphy.github.io/refs/heads/main/favicon.png">
+
+    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.1.1/css/all.min.css" />
+
+    <link rel="stylesheet" href="intro_style.css">
+
+    <link rel="stylesheet" href="/header.css">
+    <link rel="stylesheet" href="/footer.css">
+
+    <script>
+        MathJax = {
+          tex: {
+            inlineMath: [['$', '$'], ['\\(', '\\)']],
+            displayMath: [['$$', '$$'], ['\\[', '\\]']]
+          },
+          svg: {
+            fontCache: 'global'
+          }
+        };
+    </script>
+    <script type="text/javascript" id="MathJax-script" async
+        src="https://cdn.jsdelivr.net/npm/mathjax@3/es5/tex-svg.js">
+    </script>
+
+</head>
+<body>
+
+    <div id="header-placeholder"></div>
+
+    <main class="intro-container">
+
+        <h1>Welcome to BeamBench</h1>
+
+        <div class="simulator-preview">
+            <img src="Screenshot.png" alt="Screenshot of the BeamBench Optical Simulator">
+            <a href="beambench.html" class="play-link" title="Launch BeamBench Simulator">
+                <div class="play-button">
+                    <i class="fas fa-rocket"></i>
+                </div>
+            </a>
+        </div>
+
+        <section class="info-section">
+            <p>
+                <span class="author-info">
+                Original Author: <a href="https://github.com/Hussein-Tofaili" target="_blank">Hussein-Tofaili</a>
+            </span>
+            <span class="info-separator">|</span>
+                <span class="source-info">
+                    Source Code: <a href="https://github.com/visuphy/BeamBench" target="_blank">
+                        <i class="fab fa-github"></i> GitHub Repository
+                    </a>
+                </span>
+                 <span class="info-separator"></span>
+            </p>
+        </section>
+
+        <div class="description" style="margin-top: 20px;">
+             <h2 style="text-align:left; border-bottom: 1px solid #eee; padding-bottom: 5px;">About the Simulator</h2>
+            <p>
+                BeamBench is an interactive, browser-based 3D sandbox tool for designing and simulating optical systems. It provides real-time visualization of Gaussian beam propagation and polarization effects, making it ideal for students, educators, and researchers to prototype and understand optical setups.
+            </p>
+        </div>
+
+
+        <h2>Core Principles</h2>
+        <div class="description">
+            <p>
+                The simulation is built on two fundamental methods used in optical physics: the ABCD matrix formalism for Gaussian beams and Jones calculus for polarization.
+            </p>
+            <p>
+                <b>ABCD Matrix Formalism:</b> This powerful technique describes the propagation of a Gaussian beam through an optical system. The state of the beam at any point is captured by a single complex number, the complex beam parameter $q$. This parameter encodes both the beam's spot size, $w(z)$, and the radius of curvature of its wavefront, $R(z)$. Each optical element (like a lens, mirror, or even free space) is represented by a 2x2 "ABCD" matrix. By multiplying these matrices together, we can accurately trace the evolution of the beam's properties throughout the entire system.
+            </p>
+            <p>
+                <b>Jones Calculus:</b> To model polarization, BeamBench uses Jones calculus. The polarization state of a light beam is represented by a 2-element column vector, the Jones vector, which describes the amplitude and phase of the electric field's horizontal and vertical components. Optical elements that affect polarization, such as polarizers and waveplates, are represented by 2x2 Jones matrices. Applying an element's matrix to an incoming beam's vector precisely calculates the output polarization state.
+            </p>
+            <p>
+                By combining these methods, BeamBench offers a physically accurate and quantitative simulation of complex optical phenomena directly in your browser.
+            </p>
+        </div>
+
+        <h2>Key Features Overview</h2>
+        <div class="description">
+            <ul>
+                <li><strong>Interactive 3D Workspace:</strong> Drag, drop, and manipulate optical components with intuitive on-screen gizmos.</li>
+                <li><strong>Comprehensive Component Library:</strong> Build with sources, lenses, mirrors (flat, curved, dichroic), polarizers, waveplates, beam splitters (PBS), gratings, and more.</li>
+                <li><strong>Accurate Physics Engine:</strong> Simulates Gaussian beam propagation (ABCD matrices) and polarization transformations (Jones calculus).</li>
+                <li><strong>Real-Time Analytics:</strong> Select any component to view detailed readouts of the output beam's intensity, waist size, polarization state, and other key parameters.</li>
+                <li><strong>Save & Load Functionality:</strong> Save your entire optical setup to a file, load it back anytime, and use the undo/redo history to track your changes.</li>
+                <li><strong>Broadband Source Simulation:</strong> Model sources with a defined spectral bandwidth and observe effects like chromatic dispersion from gratings.</li>
+            </ul>
+            <p>BeamBench runs entirely in your browser using WebGL and Three.js, with no installation required. Launch the simulator using the button above.</p>
+        <p>This web application is still in its beta phase, and we welcome your help in making it better. If you encounter any issues or have suggestions for improvement, please report them on our <a href="https://github.com/visuphy/BeamBench/issues" target="_blank" rel="noopener noreferrer">GitHub Issues page</a>.</p>
+        </div>
+
+        <div class="comments-section">
+             <h2>Comments & Discussion</h2>
+             <p>Discussions for <strong>BeamBench</strong> can be found on its GitHub repository, or you can leave comments here related to this introductory page.</p>
+            <script src="https://giscus.app/client.js"
+        data-repo="visuphy/BeamBench"
+        data-repo-id="R_kgDOPoFvJQ"
+        data-category="Comments"
+        data-category-id="DIC_kwDOPoFvJc4Cu2wX"
+        data-mapping="pathname"
+        data-strict="0"
+        data-reactions-enabled="1"
+        data-emit-metadata="0"
+        data-input-position="bottom"
+        data-theme="light"
+        data-lang="en"
+        data-loading="lazy"
+        crossorigin="anonymous"
+        async>
+</script>
+            <noscript>Please enable JavaScript to view the comments.</noscript>
+        </div>
+
+    </main>
+
+    <div id="footer-placeholder"></div>
+
+    <!-- Script to include Header/Footer -->
+    <script src="/layout.js" defer></script>
+</body>
+</html>
