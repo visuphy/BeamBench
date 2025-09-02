@@ -223,7 +223,7 @@ function addElement(el, pos) {
     el.mesh.scale.set(2, 2, 2);
     if (pos) {
         el.mesh.position.copy(pos);
-        clampToPlaneXZ(el.mesh);
+        // clampToPlaneXZ(el.mesh); // allow y-positioning
     } else if (el.mesh.position.lengthSq() === 0) {
         const k = elements.length;
         el.mesh.position.set((k % 3 - 1) * 0.006, 0, -0.01 + 0.009 * k);
@@ -322,7 +322,7 @@ Object.values(GizmoUI.tcontrols).forEach(ctrl => {
             if (ctrl.object.userData?.isRulerPoint) {
                 Ruler.updateRuler();
             } else {
-                clampToPlaneXZ(ctrl.object);
+                // clampToPlaneXZ(ctrl.object); // allow y-movement
                 if (ctrl.mode === 'scale') {
                     ctrl.object.scale.z = 2;
                     GizmoUI.correctLabelScale(ctrl.object, params.labelFontSize);
@@ -432,13 +432,10 @@ function centerSelectedElementToBeam() {
 
     const info = elementLastInfo.get(tag.id) || meterLastInfo.get(tag.id);
 
-    if (info && info.x_mm !== undefined && info.z_mm !== undefined) {
+    if (info && info.x_mm !== undefined && info.y_mm !== undefined && info.z_mm !== undefined) {
         // Position info from propagation is in mm (world coords), object position is in meters.
-        selObj.position.set(info.x_mm / 1000, 0, info.z_mm / 1000);
+        selObj.position.set(info.x_mm / 1000, info.y_mm / 1000, info.z_mm / 1000);
 
-        // The clampToPlaneXZ is implicitly handled by the user interaction flows,
-        // but good practice to ensure it if ever called programmatically.
-        // clampToPlaneXZ(selObj);
         doRecompute();
         refreshAfterRecompute(); // Refreshes UI panels, including gizmo inputs
         State.pushHistory();
@@ -605,8 +602,6 @@ function refreshSelectedUI() {
                 euler.z = 0;
                 selObj.setRotationFromEuler(euler);
 
-                // This is handled by the live() wrapper's onFinishChange
-                // clampToPlaneXZ(selObj);
                 doRecompute();
             }
         );
