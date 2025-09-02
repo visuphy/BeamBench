@@ -42,6 +42,19 @@
     background:#161b22; color:#e6edf3; border:1px solid #30363d; border-radius: 8px; cursor: grab; user-select:none;
   }
   .pal-item:active { cursor: grabbing; }
+  .drag-ghost {
+    position: fixed;
+    pointer-events: none;
+    z-index: 100;
+    opacity: 0.8;
+    background: #2c333d;
+    color: #e6edf3;
+    border: 1px solid #4a525d;
+    border-radius: 8px;
+    padding: 6px 8px;
+    font-size: 12px;
+    font-family: ui-sans-serif, system-ui, -apple-system, Segoe UI, Roboto, Inter, Arial;
+  }
 </style>
 </head>
 <body>

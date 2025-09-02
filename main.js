@@ -194,6 +194,7 @@ function spawnAt(type, pos) {
     }
 }
 
+// --- Desktop Mouse Drag & Drop ---
 document.getElementById('palette')?.querySelectorAll('.pal-item').forEach(btn => {
     btn.addEventListener('dragstart', e => {
         e.dataTransfer.setData('text/plain', btn.getAttribute('data-type'));
@@ -207,6 +208,69 @@ renderer.domElement.addEventListener('drop', e => {
     const type = e.dataTransfer.getData('text/plain');
     if (type) spawnAt(type, screenToWorldOnXZ(e.clientX, e.clientY));
 });
+
+// --- Touch-based Drag & Drop ---
+let touchDragActive = false;
+let draggedItemType = null;
+let dragGhost = null;
+
+document.getElementById('palette')?.querySelectorAll('.pal-item').forEach(btn => {
+    btn.addEventListener('touchstart', e => {
+        if (e.touches.length !== 1) return;
+        e.preventDefault();
+
+        draggedItemType = btn.getAttribute('data-type');
+        touchDragActive = true;
+
+        dragGhost = document.createElement('div');
+        dragGhost.className = 'drag-ghost';
+        dragGhost.textContent = btn.textContent;
+        document.body.appendChild(dragGhost);
+
+        const touch = e.touches[0];
+        dragGhost.style.left = `${touch.clientX - dragGhost.offsetWidth / 2}px`;
+        dragGhost.style.top = `${touch.clientY - dragGhost.offsetHeight / 2}px`;
+
+    }, { passive: false });
+});
+
+window.addEventListener('touchmove', e => {
+    if (!touchDragActive || !dragGhost) return;
+    e.preventDefault();
+
+    if (e.touches.length > 0) {
+        const touch = e.touches[0];
+        dragGhost.style.left = `${touch.clientX - dragGhost.offsetWidth / 2}px`;
+        dragGhost.style.top = `${touch.clientY - dragGhost.offsetHeight / 2}px`;
+    }
+}, { passive: false });
+
+window.addEventListener('touchend', e => {
+    if (!touchDragActive) return;
+
+    if (e.changedTouches.length > 0) {
+        const touch = e.changedTouches[0];
+        const dropTarget = renderer.domElement;
+        const rect = dropTarget.getBoundingClientRect();
+
+        if (
+            touch.clientX >= rect.left && touch.clientX <= rect.right &&
+            touch.clientY >= rect.top && touch.clientY <= rect.bottom
+        ) {
+            if (draggedItemType) {
+                spawnAt(draggedItemType, screenToWorldOnXZ(touch.clientX, touch.clientY));
+            }
+        }
+    }
+
+    if (dragGhost) {
+        document.body.removeChild(dragGhost);
+    }
+    touchDragActive = false;
+    draggedItemType = null;
+    dragGhost = null;
+});
+
 
 /* ========= Elements & selection ========= */
 const elements = [];
