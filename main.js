@@ -48,7 +48,8 @@ GizmoUI.setup({
     orbit,
     recomputeFn: doRecompute,
     pushHistoryFn: () => State.pushHistory(),
-    refreshSelectedUIFn: refreshSelectedUI
+    refreshSelectedUIFn: refreshSelectedUI,
+    applyDirectTransformFn: applyDirectFromUI
 });
 const tcontrols = GizmoUI.tcontrols.main;
 
@@ -277,6 +278,137 @@ const elements = [];
 const selectable = [];
 const ugiPickables = [];
 
+// === Multi-selection state ===
+const selected = new Set();          // THREE.Object3D selected (meshes or source groups)
+let lastClicked = null;              // for focus when needed
+const multiPivot = new THREE.Object3D(); // invisible gizmo pivot
+scene.add(multiPivot);
+
+// === Apply transforms from bottom HUD inputs to single or multi-selection ===
+function applyDirectFromUI(op) {
+    const gizObj = GizmoUI.tcontrols.main.object;
+    if (!gizObj) return;
+
+    const isMulti = (typeof selected !== 'undefined') && (selected.size > 1) && (gizObj === multiPivot);
+
+    // Helper: decompose/move all selected by world-space delta
+    const applyDeltaToSelection = (oldPivotWorld, newPivotWorld) => {
+        const delta = new THREE.Matrix4().multiplyMatrices(newPivotWorld.clone(), oldPivotWorld.clone().invert());
+        const tmp = new THREE.Matrix4(), local = new THREE.Matrix4();
+        const pos = new THREE.Vector3(), quat = new THREE.Quaternion(), scl = new THREE.Vector3();
+
+        for (const obj of selected) {
+            const startWorld = obj.matrixWorld.clone();
+            const newWorld = tmp.multiplyMatrices(delta, startWorld);
+            const parentInv = obj.parent.matrixWorld.clone().invert();
+            local.multiplyMatrices(parentInv, newWorld);
+            local.decompose(pos, quat, scl);
+            obj.position.copy(pos);
+            obj.quaternion.copy(quat);
+            // Keep thickness fixed and labels consistent
+            obj.scale.set(scl.x, scl.y, 2);
+            GizmoUI.correctLabelScale(obj, params.labelFontSize);
+        }
+        doRecompute();
+        refreshAfterRecompute();
+        State.pushHistory();
+        refreshSelectedUI();
+    };
+
+    if (!isMulti) {
+        // ---- Single selection: behave as before ----
+        if (op.kind === 'translate') {
+            gizObj.position[op.axis] = op.value;
+        } else if (op.kind === 'rotate') {
+            const e = new THREE.Euler().setFromQuaternion(gizObj.quaternion, 'YXZ');
+            if (op.axis === 'yaw') e.y = THREE.MathUtils.degToRad(op.value);
+            if (op.axis === 'tilt') e.x = THREE.MathUtils.degToRad(op.value);
+            gizObj.setRotationFromEuler(e);
+        } else if (op.kind === 'scale') {
+            if (op.axis === 'x') gizObj.scale.x = op.value;
+            if (op.axis === 'y') gizObj.scale.y = op.value;
+            GizmoUI.correctLabelScale(gizObj, params.labelFontSize);
+        } else if (op.kind === 'scaleReset') {
+            gizObj.scale.set(2,2,2);
+            GizmoUI.correctLabelScale(gizObj, params.labelFontSize);
+        }
+        doRecompute(); refreshAfterRecompute(); State.pushHistory(); refreshSelectedUI();
+        return;
+    }
+
+    // ---- Multi selection: pivot-delta math ----
+    // 1) cache old pivot transform
+    const oldPivotWorld = multiPivot.matrixWorld.clone();
+
+    // 2) mutate pivot according to the input
+    if (op.kind === 'translate') {
+        multiPivot.position[op.axis] = op.value;
+    } else if (op.kind === 'rotate') {
+        const e = new THREE.Euler().setFromQuaternion(multiPivot.quaternion, 'YXZ');
+        if (op.axis === 'yaw') e.y = THREE.MathUtils.degToRad(op.value);
+        if (op.axis === 'tilt') e.x = THREE.MathUtils.degToRad(op.value);
+        multiPivot.setRotationFromEuler(e);
+    } else if (op.kind === 'scale') {
+        if (op.axis === 'x') multiPivot.scale.x = op.value;
+        if (op.axis === 'y') multiPivot.scale.y = op.value;
+    } else if (op.kind === 'scaleReset') {
+        multiPivot.scale.set(2,2,2);
+    }
+
+    // 3) update pivot world, compute delta, apply to all selected
+    multiPivot.updateMatrixWorld(true);
+    const newPivotWorld = multiPivot.matrixWorld.clone();
+    applyDeltaToSelection(oldPivotWorld, newPivotWorld);
+}
+
+// Utility: pick main target from a raycast hit
+function _hitTarget(obj) {
+  return obj.userData.attachTarget || obj;
+}
+
+// Utility: attach gizmo to either single object or the multi pivot
+function _attachGizmoForSelection() {
+  if (selected.size === 0) { tcontrols.detach(); return; }
+  if (selected.size === 1) {
+    const only = [...selected][0];
+    tcontrols.attach(only);
+    return;
+  }
+  // Place pivot at centroid of selection (world space)
+  const pts = [...selected].map(o => o.getWorldPosition(new THREE.Vector3()));
+  const c = pts.reduce((a,b)=>a.add(b), new THREE.Vector3()).multiplyScalar(1/pts.length);
+  multiPivot.position.copy(c);
+  multiPivot.quaternion.identity();
+  multiPivot.scale.set(1,1,1);
+  tcontrols.attach(multiPivot);
+}
+
+// Utility: toggle selection of an object, respecting sources vs elements
+function _toggleSelection(obj, additive) {
+  if (!additive) selected.clear();
+  if (obj) {
+    if (selected.has(obj) && additive) selected.delete(obj);
+    else selected.add(obj);
+    lastClicked = obj;
+  }
+  _attachGizmoForSelection();
+  refreshSelectedUI();
+}
+
+// Utility: clear selection
+function _clearSelection() { selected.clear(); tcontrols.detach(); refreshSelectedUI(); }
+
+// Expose a small helper for UI (count/type)
+function getSelectionInfo() {
+  const size = selected.size;
+  if (size <= 1) {
+    const o = [...selected][0];
+    const tag = o?.userData?.element;
+    return { size, label: tag?.type ?? "--" };
+  }
+  return { size, label: `${size} objects` };
+}
+
 // Initialize Sources module
 Sources.init({ scene, selectable, tcontrols, doRecompute, refreshAfterRecompute, State });
 
@@ -368,143 +500,220 @@ renderer.domElement.addEventListener('pointermove', e => {
     if ((dx * dx + dy * dy) > _dragPX_THRESH2) _viewDragging = true;
 });
 renderer.domElement.addEventListener('pointerup', e => {
-    const wasDragging = _viewDragging; _ptrDown.active = false; _viewDragging = false;
-    if (GizmoUI.isGizmoPointerDown() || _ugiActive || wasDragging) { setTimeout(refreshSelectedUI, 0); return; }
-    const hits = _raycasterFromEvent(e).intersectObjects(selectable, false);
-    if (hits.length) {
-        const target = hits[0].object.userData.attachTarget || hits[0].object;
-        tcontrols.attach(target);
-    } else {
-        tcontrols.detach();
-    }
-    setTimeout(refreshSelectedUI, 0);
+  const wasDragging = _viewDragging; _ptrDown.active = false; _viewDragging = false;
+  if (GizmoUI.isGizmoPointerDown() || _ugiActive || wasDragging) { setTimeout(refreshSelectedUI, 0); return; }
+
+  const hits = _raycasterFromEvent(e).intersectObjects(selectable, false);
+  const additive = e.ctrlKey || e.metaKey;  // Ctrl on Win/Linux, ⌘ on macOS
+  if (hits.length) {
+    const target = _hitTarget(hits[0].object);
+    _toggleSelection(target, additive);
+  } else {
+    if (additive) { /* keep current selection */ }
+    else _clearSelection();
+  }
+  setTimeout(refreshSelectedUI, 0);
 });
+
+// === Multi-transform application ===
+// On gizmo drag, compute delta from start and apply to every selected object
+let _multiStart = null;
+
+function _captureStartState(ctrl) {
+  if (selected.size <= 1) { _multiStart = null; return; }
+  // Capture starting world matrices
+  _multiStart = {
+    gizmoStart: ctrl.object.matrixWorld.clone(),
+    entries: [...selected].map(o => ({
+      obj: o,
+      parent: o.parent,
+      worldStart: o.matrixWorld.clone()
+    }))
+  };
+}
+
+function _applyDelta(ctrl) {
+  if (!_multiStart || selected.size <= 1) return;
+
+  // Delta = currentGizmo * inverse(startGizmo)
+  const gizmoNow = ctrl.object.matrixWorld.clone();
+  const gizmoInv = _multiStart.gizmoStart.clone().invert();
+  const delta = gizmoNow.multiply(gizmoInv); // world-space delta
+
+  const tmp = new THREE.Matrix4(), local = new THREE.Matrix4();
+  const pos = new THREE.Vector3(), quat = new THREE.Quaternion(), scl = new THREE.Vector3();
+
+  for (const ent of _multiStart.entries) {
+    // newWorld = delta * startWorld
+    const newWorld = tmp.multiplyMatrices(delta, ent.worldStart);
+    // Convert world matrix to local under current parent
+    const parentInv = ent.parent.matrixWorld.clone().invert();
+    local.multiplyMatrices(parentInv, newWorld);
+    local.decompose(pos, quat, scl);
+    ent.obj.position.copy(pos);
+    ent.obj.quaternion.copy(quat);
+    // Keep Z scale fixed for 2D-ish elements as in your single-object code
+    if (ctrl.mode === 'scale') {
+      ent.obj.scale.set(scl.x, scl.y, 2);
+      GizmoUI.correctLabelScale(ent.obj, params.labelFontSize);
+    } else {
+      ent.obj.scale.copy(scl);
+    }
+  }
+  // Keep recomputation/UI in sync
+  refreshSelectedUI();
+  doRecompute();
+}
 
 Object.values(GizmoUI.tcontrols).forEach(ctrl => {
-    ctrl.addEventListener('change', () => {
-        if (ctrl.object) {
-            if (ctrl.object.userData?.isRulerPoint) {
-                Ruler.updateRuler();
-            } else {
-                // clampToPlaneXZ(ctrl.object); // allow y-movement
-                if (ctrl.mode === 'scale') {
-                    ctrl.object.scale.z = 2;
-                    GizmoUI.correctLabelScale(ctrl.object, params.labelFontSize);
-                }
-            }
-            refreshSelectedUI();
-            doRecompute();
+  ctrl.addEventListener('mouseDown', () => {
+    _captureStartState(ctrl);
+    refreshSelectedUI(); // (existing)
+  });
+
+  ctrl.addEventListener('change', () => {
+    if (ctrl.object) {
+      if (selected.size > 1 && ctrl.object === multiPivot) {
+        _applyDelta(ctrl);
+      } else {
+        // (existing single-object behavior)
+        if (ctrl.object.userData?.isRulerPoint) {
+          Ruler.updateRuler();
+        } else {
+          // clampToPlaneXZ(ctrl.object); // allow y-movement
+          if (ctrl.mode === 'scale') {
+            ctrl.object.scale.z = 2;
+            GizmoUI.correctLabelScale(ctrl.object, params.labelFontSize);
+          }
         }
-    });
-    ctrl.addEventListener('mouseDown', refreshSelectedUI);
-    ctrl.addEventListener('mouseUp', () => {
-        if (ctrl.object?.userData?.isRulerPoint) Ruler.updateRuler();
         refreshSelectedUI();
-        State.pushHistory();
-    });
+        doRecompute();
+      }
+    }
+  });
+
+  ctrl.addEventListener('mouseUp', () => {
+    if (ctrl.object?.userData?.isRulerPoint) Ruler.updateRuler();
+    refreshSelectedUI();
+    State.pushHistory();
+    _multiStart = null;
+  });
 });
+
 
 window.addEventListener('keydown', e => {
-    if (e.target.tagName.toLowerCase() === 'input') return;
+  if (e.target.tagName.toLowerCase() === 'input') return;
 
-    if ((e.key === 'Delete' || e.key === 'Backspace') && tcontrols.object) {
-        if (tcontrols.object.userData?.isRulerPoint) {
-            const rulerContext = { scene, selectable, tcontrols, pushHistory: State.pushHistory, isRestoringState: State.isRestoring() };
-            Ruler.removeRuler(rulerContext);
-        } else {
-            deleteSelectedElement();
-        }
-    }
-    if (e.ctrlKey) {
-        if (e.key.toLowerCase() === 'z') { e.preventDefault(); e.shiftKey ? State.redo() : State.undo(); }
-    }
+  if ((e.key === 'Delete' || e.key === 'Backspace')) {
+    deleteSelectedElements();
+  }
+  if (e.ctrlKey || e.metaKey) {
+    if (e.key.toLowerCase() === 'z') { e.preventDefault(); e.shiftKey ? State.redo() : State.undo(); }
+  }
 });
 
-function deleteSelectedElement() {
-    if (!tcontrols.object) return;
-    const obj = tcontrols.object;
 
-    if (obj.userData?.element?.type === 'source') {
-        Sources.removeSourceByGroup(obj);
-    } else {
-        const i = elements.findIndex(el => el.mesh === obj);
-        if (i >= 0) {
-            scene.remove(obj);
-            selectable.splice(selectable.indexOf(obj), 1);
-            const uh = elements[i]?.ugi?.handle;
-            if (uh) ugiPickables.splice(ugiPickables.indexOf(uh), 1);
-            elements.splice(i, 1);
-        }
+function deleteSelectedElements() {
+  if (selected.size === 0) return;
+
+  for (const obj of [...selected]) {
+    if (obj.userData?.isRulerPoint) {
+      const rulerContext = { scene, selectable, tcontrols, pushHistory: State.pushHistory, isRestoringState: State.isRestoring() };
+      Ruler.removeRuler(rulerContext);
+      continue;
     }
-    tcontrols.detach();
-    doRecompute();
-    refreshAfterRecompute();
-    State.pushHistory();
+    if (obj.userData?.element?.type === 'source') {
+      Sources.removeSourceByGroup(obj);
+    } else {
+      const i = elements.findIndex(el => el.mesh === obj);
+      if (i >= 0) {
+        scene.remove(obj);
+        const si = selectable.indexOf(obj); if (si >= 0) selectable.splice(si, 1);
+        const uh = elements[i]?.ugi?.handle;
+        if (uh) { const ui = ugiPickables.indexOf(uh); if (ui >= 0) ugiPickables.splice(ui, 1); }
+        elements.splice(i, 1);
+      }
+    }
+  }
+  selected.clear();
+  tcontrols.detach();
+  doRecompute();
+  refreshAfterRecompute();
+  State.pushHistory();
 }
 
-function duplicateSelectedElement() {
-    if (!tcontrols.object) return;
-    const obj = tcontrols.object;
-    const tag = obj.userData?.element;
-    if (!tag) return;
 
-    const offset = new THREE.Vector3(0.01, 0, 0.005);
+function duplicateSelectedElements() {
+  if (selected.size === 0) return;
+  const offset = new THREE.Vector3(0.01, 0, 0.005);
+  const newSelection = [];
+
+  for (const obj of selected) {
+    const tag = obj.userData?.element;
+    if (!tag) continue;
 
     if (tag.type === 'source') {
-        const src = Sources.sources.find(s => s.group === obj);
-        if (src) {
-            const newPosition = src.group.position.clone().add(offset);
-            const newSource = Sources.addSource({ position: newPosition, yawRad: src.group.rotation.y });
-            Object.assign(newSource.props, JSON.parse(JSON.stringify(src.props)));
-            Sources.syncSourceW0ZR(newSource);
-            newSource.group.scale.copy(src.group.scale);
-        }
+      const src = Sources.sources.find(s => s.group === obj);
+      if (src) {
+        const newPosition = src.group.position.clone().add(offset);
+        const newSource = Sources.addSource({ position: newPosition, yawRad: src.group.rotation.y });
+        Object.assign(newSource.props, JSON.parse(JSON.stringify(src.props)));
+        Sources.syncSourceW0ZR(newSource);
+        newSource.group.scale.copy(src.group.scale);
+        newSelection.push(newSource.group);
+      }
     } else {
-        const el = elements.find(e => e.mesh === obj);
-        if (el) {
-            let newEl;
-            const newProps = JSON.parse(JSON.stringify(el.props));
-            switch (el.type) {
-                case 'lens': newEl = makeLens(newProps); break;
-                case 'mirror': newEl = makeMirror(newProps); break;
-                case 'polarizer': newEl = makePolarizer(newProps); break;
-                case 'waveplate': newEl = makeWaveplate(newProps); break;
-                case 'faraday': newEl = makeFaraday(newProps); break;
-                case 'beamSplitter': newEl = makeBeamSplitter(newProps); break;
-                case 'beamBlock': newEl = makeBeamBlock(); break;
-                case 'grating': newEl = makeGrating(newProps); break;
-                case 'multimeter': newEl = makeMultimeter(); break;
-                default: return;
-            }
-            if (newEl) {
-                const newPos = el.mesh.position.clone().add(offset);
-                addElement(newEl, newPos);
-                newEl.mesh.quaternion.copy(el.mesh.quaternion);
-                newEl.mesh.scale.copy(el.mesh.scale);
-                GizmoUI.correctLabelScale(newEl.mesh, params.labelFontSize);
-            }
-        }
+      const el = elements.find(e => e.mesh === obj);
+      if (!el) continue;
+      let maker = null;
+      switch (el.type) {
+        case 'lens': maker = makeLens; break;
+        case 'mirror': maker = makeMirror; break;
+        case 'polarizer': maker = makePolarizer; break;
+        case 'waveplate': maker = makeWaveplate; break;
+        case 'faraday': maker = makeFaraday; break;
+        case 'beamSplitter': maker = makeBeamSplitter; break;
+        case 'beamBlock': maker = makeBeamBlock; break;
+        case 'grating': maker = makeGrating; break;
+        case 'multimeter': maker = makeMultimeter; break;
+      }
+      if (maker) {
+        const newProps = JSON.parse(JSON.stringify(el.props));
+        const newEl = maker(newProps);
+        addElement(newEl, el.mesh.position.clone().add(offset));
+        newEl.mesh.quaternion.copy(el.mesh.quaternion);
+        newEl.mesh.scale.copy(el.mesh.scale);
+        GizmoUI.correctLabelScale(newEl.mesh, params.labelFontSize);
+        newSelection.push(newEl.mesh);
+      }
     }
+  }
+
+  // Replace selection with the new copies and attach gizmo
+  selected.clear();
+  for (const o of newSelection) selected.add(o);
+  _attachGizmoForSelection();
+  doRecompute();
+  refreshAfterRecompute();
+  State.pushHistory();
 }
+
 
 function centerSelectedElementToBeam() {
-    const selObj = tcontrols.object;
-    if (!selObj) return;
-
+  if (selected.size === 0) return;
+  let any = false;
+  for (const selObj of selected) {
     const tag = selObj.userData.element;
-    if (!tag) return;
-
+    if (!tag) continue;
     const info = elementLastInfo.get(tag.id) || meterLastInfo.get(tag.id);
-
-    if (info && info.x_mm !== undefined && info.y_mm !== undefined && info.z_mm !== undefined) {
-        // Position info from propagation is in mm (world coords), object position is in meters.
-        selObj.position.set(info.x_mm / 1000, info.y_mm / 1000, info.z_mm / 1000);
-
-        doRecompute();
-        refreshAfterRecompute(); // Refreshes UI panels, including gizmo inputs
-        State.pushHistory();
+    if (info && info.x_mm !== undefined) {
+      selObj.position.set(info.x_mm/1000, info.y_mm/1000, info.z_mm/1000);
+      any = true;
     }
+  }
+  if (any) { doRecompute(); refreshAfterRecompute(); State.pushHistory(); }
 }
+
 
 /* ========= Ribbons & Readouts ========= */
 let ribbonMeshes = [];
@@ -558,6 +767,45 @@ function refreshSelectedUI() {
         Ruler.buildRulerUI(gui, State.pushHistory, rulerContext);
         Ruler.updateRuler();
         return;
+    }
+    // ==== Multi-selection UI (show when >1 objects selected) ====
+    if (typeof selected !== 'undefined' && selected.size > 1) {
+    // Header shows "N objects"
+    ui.kind = `${selected.size} objects`;
+    elFolder.add(ui, "kind").name("Selected").disable?.();
+
+    // Actions that operate on the whole selection
+    const actionsFolder = elFolder.addFolder('Actions');
+    const buttonActions = {
+        'Duplicate': duplicateSelectedElements,
+        'Delete': deleteSelectedElements,
+        'Center to Beam': centerSelectedElementToBeam,
+    };
+
+    const dupCtrl = actionsFolder.add(buttonActions, 'Duplicate');
+    const delCtrl = actionsFolder.add(buttonActions, 'Delete');
+    const centerCtrl = actionsFolder.add(buttonActions, 'Center to Beam');
+
+    // Same styling you already use
+    const container = actionsFolder.domElement.querySelector('.children');
+    if (container) {
+        container.style.display = 'flex';
+        container.style.justifyContent = 'space-around';
+        container.style.gap = '4px';
+        container.style.padding = '4px';
+        [dupCtrl, delCtrl, centerCtrl].forEach(ctrl => {
+        if (ctrl?.domElement) {
+            ctrl.domElement.style.flex = '1';
+            const btn = ctrl.domElement.querySelector('button');
+            if (btn) btn.style.width = '100%';
+        }
+        });
+    }
+    const titleElement = actionsFolder.domElement.querySelector('.title');
+    if (titleElement) titleElement.style.display = 'none';
+
+    // IMPORTANT: stop here so we don't render single-element property editors
+    return;
     }
 
     // --- Standard Element and Source UI ---
@@ -948,8 +1196,8 @@ function refreshSelectedUI() {
 
     const actionsFolder = elFolder.addFolder('Actions');
     const buttonActions = {
-        'Duplicate': duplicateSelectedElement,
-        'Delete': deleteSelectedElement,
+        'Duplicate': duplicateSelectedElements,
+        'Delete': deleteSelectedElements,
         'Center to Beam': centerSelectedElementToBeam,
     };
 

@@ -10,6 +10,7 @@ import { TransformControls } from 'three/addons/controls/TransformControls.js';
 let currentGizmoMode = 'translate'; // 'translate', 'rotate', or 'scale'
 let gizmoControlsUI = null;
 let _gizmoPointerDown = false;
+let _applyDirectTransformFn = null;
 
 // All transform controls are created here but exported for main.js to use
 export const tcontrols = {};
@@ -55,7 +56,8 @@ export function correctLabelScale(scaledObject, globalFontSize = 1.0) {
  * @param {function} pushHistoryFn - The function to call to save an undo state.
  * @param {function} refreshSelectedUIFn - The function to refresh the main GUI panel.
  */
-function setupGizmoUI(recomputeFn, pushHistoryFn, refreshSelectedUIFn) {
+function setupGizmoUI(recomputeFn, pushHistoryFn, refreshSelectedUIFn, applyDirectTransformFn) {
+    _applyDirectTransformFn = applyDirectTransformFn;
     // Inject CSS for the buttons and input fields
     const styles = `
         #gizmo-controls {
@@ -167,14 +169,14 @@ function setupGizmoUI(recomputeFn, pushHistoryFn, refreshSelectedUIFn) {
         input.type = 'number';
         input.step = 0.1;
         input.onchange = () => {
-            const selObj = tcontrols.main.object;
-            if (!selObj) return;
             const val = parseFloat(input.value) / 1000;
-            if (Number.isFinite(val)) {
+            if (!Number.isFinite(val)) return;
+            if (_applyDirectTransformFn) {
+                _applyDirectTransformFn({ kind: 'translate', axis: axis.toLowerCase(), value: val });
+            } else {
+                const selObj = tcontrols.main.object; if (!selObj) return;
                 selObj.position[axis.toLowerCase()] = val;
-                // clampToPlaneXZ is handled in main.js via event listener
-                recomputeFn();
-                pushHistoryFn();
+                recomputeFn(); pushHistoryFn();
             }
         };
         group.appendChild(label);
@@ -198,15 +200,16 @@ function setupGizmoUI(recomputeFn, pushHistoryFn, refreshSelectedUIFn) {
     yawInput.type = 'number';
     yawInput.step = 1;
     yawInput.onchange = () => {
-        const selObj = tcontrols.main.object;
-        if (!selObj) return;
         const val = parseFloat(yawInput.value);
-        if (Number.isFinite(val)) {
+        if (!Number.isFinite(val)) return;
+        if (_applyDirectTransformFn) {
+            _applyDirectTransformFn({ kind: 'rotate', axis: 'yaw', value: val });
+        } else {
+            const selObj = tcontrols.main.object; if (!selObj) return;
             const e = new THREE.Euler().setFromQuaternion(selObj.quaternion, 'YXZ');
             e.y = THREE.MathUtils.degToRad(val);
             selObj.setRotationFromEuler(e);
-            recomputeFn();
-            pushHistoryFn();
+            recomputeFn(); pushHistoryFn();
         }
     };
     yawGroup.appendChild(yawLabel);
@@ -223,15 +226,16 @@ function setupGizmoUI(recomputeFn, pushHistoryFn, refreshSelectedUIFn) {
     tiltInput.type = 'number';
     tiltInput.step = 1;
     tiltInput.onchange = () => {
-        const selObj = tcontrols.main.object;
-        if (!selObj) return;
         const val = parseFloat(tiltInput.value);
-        if (Number.isFinite(val)) {
+        if (!Number.isFinite(val)) return;
+        if (_applyDirectTransformFn) {
+            _applyDirectTransformFn({ kind: 'rotate', axis: 'tilt', value: val });
+        } else {
+            const selObj = tcontrols.main.object; if (!selObj) return;
             const e = new THREE.Euler().setFromQuaternion(selObj.quaternion, 'YXZ');
             e.x = THREE.MathUtils.degToRad(val);
             selObj.setRotationFromEuler(e);
-            recomputeFn();
-            pushHistoryFn();
+            recomputeFn(); pushHistoryFn();
         }
     };
     tiltGroup.appendChild(tiltLabel);
@@ -255,14 +259,15 @@ function setupGizmoUI(recomputeFn, pushHistoryFn, refreshSelectedUIFn) {
     widthInput.type = 'number';
     widthInput.step = 0.1;
     widthInput.onchange = () => {
-        const selObj = tcontrols.main.object;
-        if (!selObj) return;
         const val = parseFloat(widthInput.value);
-        if (Number.isFinite(val) && val > 0) {
+        if (!Number.isFinite(val) || val <= 0) return;
+        if (_applyDirectTransformFn) {
+            _applyDirectTransformFn({ kind: 'scale', axis: 'x', value: val });
+        } else {
+            const selObj = tcontrols.main.object; if (!selObj) return;
             selObj.scale.x = val;
-            correctLabelScale(selObj); // Assumes default font size
-            recomputeFn();
-            pushHistoryFn();
+            correctLabelScale(selObj);
+            recomputeFn(); pushHistoryFn();
         }
     };
     widthGroup.appendChild(widthLabel);
@@ -279,14 +284,15 @@ function setupGizmoUI(recomputeFn, pushHistoryFn, refreshSelectedUIFn) {
     heightInput.type = 'number';
     heightInput.step = 0.1;
     heightInput.onchange = () => {
-        const selObj = tcontrols.main.object;
-        if (!selObj) return;
         const val = parseFloat(heightInput.value);
-        if (Number.isFinite(val) && val > 0) {
+        if (!Number.isFinite(val) || val <= 0) return;
+        if (_applyDirectTransformFn) {
+            _applyDirectTransformFn({ kind: 'scale', axis: 'y', value: val });
+        } else {
+            const selObj = tcontrols.main.object; if (!selObj) return;
             selObj.scale.y = val;
-            correctLabelScale(selObj); // Assumes default font size
-            recomputeFn();
-            pushHistoryFn();
+            correctLabelScale(selObj);
+            recomputeFn(); pushHistoryFn();
         }
     };
     heightGroup.appendChild(heightLabel);
@@ -298,13 +304,15 @@ function setupGizmoUI(recomputeFn, pushHistoryFn, refreshSelectedUIFn) {
     resetSizeBtn.className = 'gizmo-btn';
     resetSizeBtn.innerText = 'Reset Size';
     resetSizeBtn.onclick = () => {
-        const selObj = tcontrols.main.object;
-        if (selObj) {
-            selObj.scale.set(2, 2, 2);
-            correctLabelScale(selObj); // Assumes default font size
-            recomputeFn();
-            pushHistoryFn();
-            refreshSelectedUIFn(); // To update the input values
+        if (_applyDirectTransformFn) {
+            _applyDirectTransformFn({ kind: 'scaleReset' });
+        } else {
+            const selObj = tcontrols.main.object;
+            if (selObj) {
+                selObj.scale.set(2, 2, 2);
+                correctLabelScale(selObj);
+                recomputeFn(); pushHistoryFn(); refreshSelectedUIFn();
+            }
         }
     };
     scaleInputs.appendChild(resetSizeBtn);
@@ -455,8 +463,8 @@ export function isGizmoPointerDown() {
  * A wrapper to initialize the entire UI module.
  * @param {object} options - Contains camera, domElement, scene, orbit, and callback functions.
  */
-export function setup({ camera, domElement, scene, orbit, recomputeFn, pushHistoryFn, refreshSelectedUIFn }) {
+export function setup({ camera, domElement, scene, orbit, recomputeFn, pushHistoryFn, refreshSelectedUIFn, applyDirectTransformFn }) {
     initGizmos(camera, domElement, scene, orbit);
-    setupGizmoUI(recomputeFn, pushHistoryFn, refreshSelectedUIFn);
+    setupGizmoUI(recomputeFn, pushHistoryFn, refreshSelectedUIFn, applyDirectTransformFn);
     updateGizmoState(); // Initial call to ensure gizmos and UI are hidden
 }
