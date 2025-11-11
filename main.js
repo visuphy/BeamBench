@@ -752,8 +752,27 @@ function refreshSelectedUI() {
         document.getElementById('gizmo-rot-yaw').value = THREE.MathUtils.radToDeg(selObj.rotation.y).toFixed(1);
         document.getElementById('gizmo-rot-tilt').value = THREE.MathUtils.radToDeg(selObj.rotation.x).toFixed(1);
 
-        document.getElementById('gizmo-scale-width').value = selObj.scale.x.toFixed(2);
-        document.getElementById('gizmo-scale-height').value = selObj.scale.y.toFixed(2);
+        const baseWidth = selObj.geometry?.parameters?.width;
+        const baseHeight = selObj.geometry?.parameters?.height;
+        const widthInput = document.getElementById('gizmo-scale-width');
+        const heightInput = document.getElementById('gizmo-scale-height');
+        const widthLabel = document.getElementById('gizmo-scale-width-label');
+        const heightLabel = document.getElementById('gizmo-scale-height-label');
+
+        if (baseWidth) {
+            widthInput.value = (selObj.scale.x * baseWidth * 1000).toFixed(1);
+            if (widthLabel) widthLabel.innerText = 'Width (mm)';
+        } else {
+            widthInput.value = selObj.scale.x.toFixed(2);
+            if (widthLabel) widthLabel.innerText = 'Width';
+        }
+        if (baseHeight) {
+            heightInput.value = (selObj.scale.y * baseHeight * 1000).toFixed(1);
+            if (heightLabel) heightLabel.innerText = 'Height (mm)';
+        } else {
+            heightInput.value = selObj.scale.y.toFixed(2);
+            if (heightLabel) heightLabel.innerText = 'Height';
+        }
     }
 
     if (!selObj) {

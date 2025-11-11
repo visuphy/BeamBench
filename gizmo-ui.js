@@ -253,7 +253,8 @@ function setupGizmoUI(recomputeFn, pushHistoryFn, refreshSelectedUIFn, applyDire
     const widthGroup = document.createElement('div');
     widthGroup.className = 'gizmo-input-group';
     const widthLabel = document.createElement('label');
-    widthLabel.innerText = 'Width';
+    widthLabel.id = 'gizmo-scale-width-label';
+    widthLabel.innerText = 'Width (mm)';
     const widthInput = document.createElement('input');
     widthInput.id = 'gizmo-scale-width';
     widthInput.type = 'number';
@@ -261,11 +262,15 @@ function setupGizmoUI(recomputeFn, pushHistoryFn, refreshSelectedUIFn, applyDire
     widthInput.onchange = () => {
         const val = parseFloat(widthInput.value);
         if (!Number.isFinite(val) || val <= 0) return;
+        const selObj = tcontrols.main.object;
+        if (!selObj) return;
+        const baseWidth = selObj.geometry?.parameters?.width;
+        const newScale = baseWidth ? (val / 1000) / baseWidth : val;
+
         if (_applyDirectTransformFn) {
-            _applyDirectTransformFn({ kind: 'scale', axis: 'x', value: val });
+            _applyDirectTransformFn({ kind: 'scale', axis: 'x', value: newScale });
         } else {
-            const selObj = tcontrols.main.object; if (!selObj) return;
-            selObj.scale.x = val;
+            selObj.scale.x = newScale;
             correctLabelScale(selObj);
             recomputeFn(); pushHistoryFn();
         }
@@ -278,7 +283,8 @@ function setupGizmoUI(recomputeFn, pushHistoryFn, refreshSelectedUIFn, applyDire
     const heightGroup = document.createElement('div');
     heightGroup.className = 'gizmo-input-group';
     const heightLabel = document.createElement('label');
-    heightLabel.innerText = 'Height';
+    heightLabel.id = 'gizmo-scale-height-label';
+    heightLabel.innerText = 'Height (mm)';
     const heightInput = document.createElement('input');
     heightInput.id = 'gizmo-scale-height';
     heightInput.type = 'number';
@@ -286,11 +292,15 @@ function setupGizmoUI(recomputeFn, pushHistoryFn, refreshSelectedUIFn, applyDire
     heightInput.onchange = () => {
         const val = parseFloat(heightInput.value);
         if (!Number.isFinite(val) || val <= 0) return;
+        const selObj = tcontrols.main.object;
+        if (!selObj) return;
+        const baseHeight = selObj.geometry?.parameters?.height;
+        const newScale = baseHeight ? (val / 1000) / baseHeight : val;
+
         if (_applyDirectTransformFn) {
-            _applyDirectTransformFn({ kind: 'scale', axis: 'y', value: val });
+            _applyDirectTransformFn({ kind: 'scale', axis: 'y', value: newScale });
         } else {
-            const selObj = tcontrols.main.object; if (!selObj) return;
-            selObj.scale.y = val;
+            selObj.scale.y = newScale;
             correctLabelScale(selObj);
             recomputeFn(); pushHistoryFn();
         }
