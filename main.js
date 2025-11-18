@@ -18,7 +18,8 @@ import {
   makeLens, makeMirror, makeMultimeter,
   makePolarizer, makeWaveplate, makeFaraday,
   makeBeamSplitter, makeBeamBlock, makeGrating,
-  updateElementLabel
+  updateElementLabel,
+  refreshMirrorVisual
 } from './elements.js';
 import * as pol from './polarization.js';
 import * as Propagation from './propagation.js';
@@ -114,6 +115,31 @@ function live(ctrl, handler) {
     ctrl.onFinishChange(v => { handler(v); refreshAfterRecompute(); State.pushHistory(); });
     return ctrl;
 }
+
+function clampMirrorSizeToR(mesh, R) {
+  if (!mesh?.geometry?.parameters) return;
+  const Ra = Math.abs(R);
+  if (!Number.isFinite(Ra) || Ra <= 0) return;
+
+  const baseW = mesh.geometry.parameters.width  || 0.004;
+  const baseH = mesh.geometry.parameters.height || 0.004;
+  const maxWorld = 2 * Ra;
+
+  // convert to max scale on each axis
+  const maxScaleX = Math.max(1e-6, maxWorld / baseW);
+  const maxScaleY = Math.max(1e-6, maxWorld / baseH);
+
+  const signX = Math.sign(mesh.scale.x) || 1;
+  const signY = Math.sign(mesh.scale.y) || 1;
+
+  const absX = Math.min(Math.abs(mesh.scale.x), maxScaleX);
+  const absY = Math.min(Math.abs(mesh.scale.y), maxScaleY);
+
+  mesh.scale.x = signX * absX;
+  mesh.scale.y = signY * absY;
+}
+
+
 
 /* ========= GUI ========= */
 let outFolder = null;
@@ -332,15 +358,27 @@ function applyDirectFromUI(op) {
             gizObj.scale.set(2,2,2);
             GizmoUI.correctLabelScale(gizObj, params.labelFontSize);
         }
+
+        // START of ADDED CODE
+        // After any scale change from the UI, apply mirror-specific logic
+        if (op.kind === 'scale' || op.kind === 'scaleReset') {
+            const tag = gizObj.userData?.element;
+            if (tag?.type === 'mirror') {
+                if (!tag.props.flat && Number.isFinite(tag.props.R)) {
+                    clampMirrorSizeToR(gizObj, tag.props.R);
+                }
+                refreshMirrorVisual(tag);
+            }
+        }
+        // END of ADDED CODE
+
         doRecompute(); refreshAfterRecompute(); State.pushHistory(); refreshSelectedUI();
         return;
     }
 
     // ---- Multi selection: pivot-delta math ----
-    // 1) cache old pivot transform
     const oldPivotWorld = multiPivot.matrixWorld.clone();
 
-    // 2) mutate pivot according to the input
     if (op.kind === 'translate') {
         multiPivot.position[op.axis] = op.value;
     } else if (op.kind === 'rotate') {
@@ -355,7 +393,6 @@ function applyDirectFromUI(op) {
         multiPivot.scale.set(2,2,2);
     }
 
-    // 3) update pivot world, compute delta, apply to all selected
     multiPivot.updateMatrixWorld(true);
     const newPivotWorld = multiPivot.matrixWorld.clone();
     applyDeltaToSelection(oldPivotWorld, newPivotWorld);
@@ -572,25 +609,49 @@ Object.values(GizmoUI.tcontrols).forEach(ctrl => {
   });
 
   ctrl.addEventListener('change', () => {
-    if (ctrl.object) {
+  if (!ctrl.object) return;
+  if (ctrl.object) {
+
       if (selected.size > 1 && ctrl.object === multiPivot) {
+
         _applyDelta(ctrl);
+
       } else {
+
         // (existing single-object behavior)
+
         if (ctrl.object.userData?.isRulerPoint) {
+
           Ruler.updateRuler();
+
         } else {
+
           // clampToPlaneXZ(ctrl.object); // allow y-movement
+
           if (ctrl.mode === 'scale') {
+
             ctrl.object.scale.z = 2;
+
             GizmoUI.correctLabelScale(ctrl.object, params.labelFontSize);
-          }
-        }
-        refreshSelectedUI();
-        doRecompute();
+
+          }}}}
+  if (ctrl.mode === 'scale') {
+    ctrl.object.scale.z = 2;
+    GizmoUI.correctLabelScale(ctrl.object, params.labelFontSize);
+
+    const tag = ctrl.object.userData?.element;
+    if (tag?.type === 'mirror') {
+      if (!tag.props.flat && Number.isFinite(tag.props.R)) {
+        clampMirrorSizeToR(ctrl.object, tag.props.R);
       }
+      // rebuild from *current* world size every time we scale
+      refreshMirrorVisual(tag);
     }
-  });
+  }
+  refreshSelectedUI();
+  doRecompute();
+});
+
 
   ctrl.addEventListener('mouseUp', () => {
     if (ctrl.object?.userData?.isRulerPoint) Ruler.updateRuler();
@@ -956,35 +1017,102 @@ function refreshSelectedUI() {
     }
 
     // Unified Mirror + Dichroic UI
-    if (tag?.type === "mirror") {
-        const e = elements.find(x => x.mesh === selObj); if (e) {
-            ui.m_flat = !!e.props.flat;
-            ui.R_mm = e.props.R * 1e3;
-            ui.m_refl = (e.props.refl ?? 1);
-            ui.m_dich = !!e.props.dichroic;
+if (tag?.type === "mirror") {
+    const e = elements.find(x => x.mesh === selObj); if (e) {
+        ui.m_flat = !!e.props.flat;
+        ui.R_mm = e.props.R * 1e3;
+        ui.m_refl = (e.props.refl ?? 1);
+        ui.m_dich = !!e.props.dichroic;
+        // Material index of refraction for spherical mirror substrate
+        ui.m_n = (e.props.n ?? 1.5);
 
-            ui.reflMin_nm = e.props.reflBand_nm?.min ?? 400;
-            ui.reflMax_nm = e.props.reflBand_nm?.max ?? 700;
-            ui.transMin_nm = e.props.transBand_nm?.min ?? 700;
-            ui.transMax_nm = e.props.transBand_nm?.max ?? 1100;
+        ui.reflMin_nm = e.props.reflBand_nm?.min ?? 400;
+        ui.reflMax_nm = e.props.reflBand_nm?.max ?? 700;
+        ui.transMin_nm = e.props.transBand_nm?.min ?? 700;
+        ui.transMax_nm = e.props.transBand_nm?.max ?? 1100;
 
-            let rCtrl;
+        let rCtrl;
 
-            elFolder.add(ui, "m_flat").name("Flat (R = ∞)")
-                .onChange(v => {
-                    e.props.flat = !!v;
-                    updateElementLabel(e); GizmoUI.correctLabelScale(e.mesh, params.labelFontSize);
-                    doRecompute(); refreshAfterRecompute();
-                    const row = rCtrl?.domElement?.closest?.(".controller");
-                    if (row) { row.style.opacity = v ? "0.5" : "1.0"; row.style.pointerEvents = v ? "none" : "auto"; }
-                    State.pushHistory();
-                });
+        elFolder.add(ui, "m_flat").name("Flat (R = ∞)").onChange(v => {
+            e.props.flat = !!v;
+            updateElementLabel(e); GizmoUI.correctLabelScale(e.mesh, params.labelFontSize);
+            refreshMirrorVisual(e);
+            doRecompute(); refreshAfterRecompute(); State.pushHistory();
+        });
 
-            rCtrl = elFolder.add(ui, "R_mm", -20000, 20000, 0.1).name("Radius R (mm)")
-                .onFinishChange(v => { e.props.R = Number(v) * 1e-3; updateElementLabel(e); GizmoUI.correctLabelScale(e.mesh, params.labelFontSize); doRecompute(); refreshAfterRecompute(); State.pushHistory(); });
+        // R change (mm → m)
+        rCtrl = elFolder.add(ui, "R_mm", -20000, 20000, 0.1).name("Radius R (mm)")
+            .onFinishChange(v => {
+                e.props.R = Number(v) * 1e-3;
+                if (!e.props.flat) clampMirrorSizeToR(e.mesh, e.props.R);
+                updateElementLabel(e); GizmoUI.correctLabelScale(e.mesh, params.labelFontSize);
+                refreshMirrorVisual(e);
+                doRecompute(); refreshAfterRecompute(); State.pushHistory();
+            });
+                    // --- Thickness (spherical only): distance from vertex to planar back (mm) ---
+        if (!e.props.flat && Number.isFinite(e.props.R)) {
+            const isConcave = e.props.R > 0;   // R > 0  → concave
+            const isConvex  = e.props.R < 0;   // R < 0  → convex
 
-            const reflCtrl = live(elFolder.add(ui, "m_refl", 0, 1, 0.01).name("Reflectance"),
-                v => { e.props.refl = Math.min(1, Math.max(0, Number(v))); updateElementLabel(e); GizmoUI.correctLabelScale(e.mesh, params.labelFontSize); doRecompute(); });
+            // Geometry-based minimum only matters for convex mirrors (R < 0)
+            const tGeomMin_m = (isConvex ? e.props._thicknessMin : 0) || 0;
+
+            let tCur_m = e.props.thickness;
+            if (!Number.isFinite(tCur_m) || tCur_m < tGeomMin_m) {
+                // Default to something sensible if missing / too small
+                tCur_m = Math.max(tGeomMin_m, 1.8e-4); // ~0.18 mm
+                e.props.thickness = tCur_m;
+            }
+
+            const tCur_mm = tCur_m * 1e3;
+            const tMin_mm = tGeomMin_m * 1e3;   // 0 for concave, geom-min for convex
+
+            // Give the user a LOT of headroom:
+            //  - at least 50 mm
+            //  - at least 3× current value
+            //  - and always above tMin
+            const tMax_mm = Math.max(tCur_mm * 3, tMin_mm + 0.1, 50);
+
+            ui.m_thick_mm = tCur_mm;
+
+            live(
+                elFolder.add(ui, "m_thick_mm", tMin_mm, tMax_mm, 0.01)
+                    .name("Thickness (mm)"),
+                v => {
+                    let t_m = Number(v) * 1e-3;
+
+                    if (isConvex) {
+                        // For convex, enforce the geometric minimum so surfaces never overlap
+                        const min_m = (e.props._thicknessMin || 0);
+                        t_m = Math.max(min_m, t_m);
+                    } else {
+                        // For concave, user can choose any thickness ≥ 0 freely
+                        t_m = Math.max(0, t_m);
+                    }
+
+                    e.props.thickness = t_m;
+                    refreshMirrorVisual(e);
+                    doRecompute();
+                }
+            );
+        }
+
+                // Show substrate index only for spherical mirrors (dummy variable for now)
+        if (!e.props.flat && Number.isFinite(e.props.R)) {
+            live(
+                elFolder.add(ui, "m_n").name("Index n"),
+                v => {
+                    const nVal = Number(v);
+                    // Keep it sane; fall back to 1.5 if invalid
+                    e.props.n = (Number.isFinite(nVal) && nVal > 0) ? nVal : 1.5;
+                    // Currently unused in ray-trace, but stored for future upgrades
+                    doRecompute();
+                }
+            );
+        }
+
+        const reflCtrl = live(elFolder.add(ui, "m_refl", 0, 1, 0.01).name("Reflectance"),
+            v => { e.props.refl = Math.min(1, Math.max(0, Number(v))); updateElementLabel(e); GizmoUI.correctLabelScale(e.mesh, params.labelFontSize); doRecompute(); });
 
             elFolder.add(ui, "m_dich").name("Dichroic")
                 .onChange(v => {
@@ -1269,7 +1397,7 @@ State.init({
     doRecompute, refreshSelectedUI,
     Ruler, GizmoUI,
     beamWidthScaleController, showGridController, showLabelsController, labelFontSizeController,
-    recreateFuncs
+    recreateFuncs, refreshMirrorVisual
 });
 
 /* ========= Demo ========= */

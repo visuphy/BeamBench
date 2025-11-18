@@ -154,16 +154,25 @@ function restoreState(state) {
     state.elements.forEach(eState => {
         const newEl = _context.recreateFuncs[eState.type](eState.props);
         if (newEl) {
-            if (newEl.type === 'grating') newEl.props.visibleOrders = eState.props.visibleOrders || {};
+            if (newEl.type === 'grating') {
+                newEl.props.visibleOrders = eState.props.visibleOrders || {};
+            }
             const newPos = new THREE.Vector3().fromArray(eState.position);
             _context.addElement(newEl, newPos);
             newEl.mesh.quaternion.fromArray(eState.quaternion);
+
             if (eState.scale) {
                 newEl.mesh.scale.fromArray(eState.scale);
                 _context.GizmoUI.correctLabelScale(newEl.mesh, _context.params.labelFontSize);
             }
+
+            // ⭐ Ensure mirrors (flat or spherical) rebuild their visuals
+            if (newEl.type === 'mirror' && typeof _context.refreshMirrorVisual === 'function') {
+                _context.refreshMirrorVisual(newEl);
+            }
         }
     });
+
 
     // Restore ruler
     const rulerContext = { scene: _context.scene, selectable: _context.selectable, tcontrols: _context.tcontrols, pushHistory, isRestoringState: true };

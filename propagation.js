@@ -61,6 +61,51 @@ function reflectAcrossElementNormal(dirv, el){
   const nWorld = new THREE.Vector3(0,0,1).applyQuaternion(worldQ).normalize();
   return dirv.clone().sub(nWorld.clone().multiplyScalar(2 * dirv.dot(nWorld))).normalize();
 }
+function _hitWorldNormal(hit, el){
+  if (hit && hit.face && hit.object) {
+    const n = hit.face.normal.clone();
+    n.transformDirection(hit.object.matrixWorld).normalize();
+    return n;
+  }
+  // Fallback: element's +z normal in world space
+  const worldQ = el.mesh.getWorldQuaternion(new THREE.Quaternion());
+  return new THREE.Vector3(0,0,1).applyQuaternion(worldQ).normalize();
+}
+
+function reflectAcrossHitNormal(dirv, hit, el){
+  const nWorld = _hitWorldNormal(hit, el);
+  const n = nWorld.clone();
+  // Ensure normal points against incoming direction
+  if (dirv.dot(n) > 0) n.multiplyScalar(-1);
+  return dirv.clone().sub(n.multiplyScalar(2 * dirv.dot(n))).normalize();
+}
+
+function refractAcrossHitNormal(dirv, hit, n1, n2, el){
+  const nWorld = _hitWorldNormal(hit, el);
+  let n = nWorld.clone();
+  // Normal should point against incoming ray
+  if (dirv.dot(n) > 0) n.multiplyScalar(-1);
+
+  const eta  = n1 / n2;
+  const cosI = -dirv.dot(n);               // > 0 by construction
+  const sin2T = eta * eta * (1 - cosI * cosI);
+
+  if (sin2T > 1) {
+    // Total internal reflection: return *reflected* direction and flag it.
+    const reflDir = dirv.clone()
+      .sub(n.multiplyScalar(2 * dirv.dot(n)))
+      .normalize();
+    return { dir: reflDir, tir: true };
+  }
+
+  const cosT = Math.sqrt(1 - sin2T);
+  const dirOut = dirv.clone().multiplyScalar(eta)
+    .add(n.multiplyScalar(eta * cosI - cosT))
+    .normalize();
+
+  return { dir: dirOut, tir: false };
+}
+
 
 /**
  * Main propagation function.
@@ -86,7 +131,19 @@ export function recompute(context) {
   const activeSources = sources.length ? sources : [addSource({ position:new THREE.Vector3(0.0, 0.0, -0.0004), yawRad:0 })];
   const removeImplicitAfter = sources.length===0 ? activeSources[0] : null;
 
-  const meshes = elements.map(e=>e.mesh);
+  const meshes = [];
+  for (const e of elements) {
+    if (e.type === "mirror" && !e.props.flat &&
+        Array.isArray(e._surfaceMeshes) &&
+        e._surfaceMeshes.length) {
+
+      meshes.push(...e._surfaceMeshes);
+    } else {
+      meshes.push(e.mesh);
+    }
+  }
+
+
   const maxSteps = params.maxSegments;
 
   const completedPaths = [];
@@ -168,6 +225,7 @@ export function recompute(context) {
         amps: [ amp0 ],
         polSamples: [],
         polSampleCountdown: POL_SPACING / 2.0, // Start sampling partway through the first interval
+        nMedium: 1.0,
       };
     };
 
@@ -221,7 +279,12 @@ export function recompute(context) {
 
     for(let step=0; step<maxSteps && path.traveled < path.maxLen; step++){
       const rc = new THREE.Raycaster(path.pos, path.dir, 1e-8, Math.max(1e-5, path.maxLen - path.traveled));
-      const hits = rc.intersectObjects(meshes, false).filter(h => h.object !== path.lastHit);
+      const hits = rc.intersectObjects(meshes, false).filter(h => {
+  // Only skip the *immediate* self-intersection at the same point
+  if (!path.lastHit) return true;
+  if (h.object !== path.lastHit) return true;
+  return h.distance > 1e-7;  // tweak epsilon if needed
+});
 
       // Split a free-space segment [0, L] at the waist if it sits inside
       const sampleSegment = (L)=>{
@@ -311,7 +374,8 @@ export function recompute(context) {
           maxLen: path.maxLen, λ: path.λ, Jnorm: path.Jnorm, M2: path.M2,
           pts: path.pts.slice(), dirs: path.dirs.slice(), widths: path.widths.slice(),
           amps: path.amps.slice(), polSamples: path.polSamples.slice(),
-          polSampleCountdown: path.polSampleCountdown
+          polSampleCountdown: path.polSampleCountdown,
+          nMedium: path.nMedium
         });
 
         const transmitted = cloneBase();
@@ -383,97 +447,170 @@ export function recompute(context) {
       }
 
       /* ---------- Unified Mirror (flat/spherical) with dichroic bands ---------- */
-      if(el.type==="mirror"){
-        let refl = Math.min(1, Math.max(0, el.props.refl ?? 1));
-        let T = 1 - refl;
+      if (el.type === "mirror") {
+      const isCurvedMirror = !el.props.flat && Number.isFinite(el.props.R);
+      const nMirror = el.props.n ?? 1.5;
+      const nCurr = path.nMedium ?? 1.0;
+      const isInsideMirror = isCurvedMirror && (Math.abs(nCurr - nMirror) < 1e-6);
+      const surfaceKind = isCurvedMirror ? (hit.object?.userData?.surfaceKind || null) : 'front';
+      const isFront = (surfaceKind === 'front');
 
-        if (el.props.dichroic) {
-          const nm = path.λ * 1e9;
-          const inBand = (nm, band) => Number.isFinite(nm) && band && nm >= band.min && nm <= band.max;
-          if (inBand(nm, el.props.reflBand_nm)) { refl = 1; T = 0; }
-          else if (inBand(nm, el.props.transBand_nm)) { refl = 0; T = 1; }
-          else { refl = 0; T = 1; } // outside bands -> transmit
-        }
-
-        const cloneBase = () => ({
-          pos: path.pos.clone(), q: path.q.clone(), traveled: path.traveled, lastHit: null,
-          maxLen: path.maxLen, λ: path.λ, Jnorm: path.Jnorm, M2: path.M2,
-          pts: path.pts.slice(), dirs: path.dirs.slice(), widths: path.widths.slice(),
-          amps: path.amps.slice(), polSamples: path.polSamples.slice(),
-          polSampleCountdown: path.polSampleCountdown
-        });
-
-        let transmitted, reflected;
-
-        if(T > 0){
-          transmitted = cloneBase();
-          transmitted.dir = path.dir.clone();
-          transmitted.lastHit = hit.object; // Prevent back-face reflection
-          transmitted.J = [ path.J[0].mul(Math.sqrt(T)), path.J[1].mul(Math.sqrt(T)) ];
-          // Add weak focusing in transmission if the mirror is spherical
-          if (!el.props.flat && typeof el.abcdTransmit === 'function') {
-            transmitted.q = el.abcdTransmit(transmitted.q);
-          }
-          transmitted.pts.push(transmitted.pos.clone());
-          transmitted.dirs.push(transmitted.dir.clone());
-          transmitted.widths.push( wFromQ(transmitted.q, transmitted.λ, transmitted.M2) );
-          transmitted.amps.push( jNorm(transmitted.J) / transmitted.Jnorm );
-          transmitted.pos.add(transmitted.dir.clone().multiplyScalar(1e-6));
-          if((jNorm(transmitted.J)/transmitted.Jnorm) >= AMP_CUTOFF) queue.push(transmitted);
-        }
-
-        if(refl > 0){
-          reflected = cloneBase();
-          reflected.dir = reflectAcrossElementNormal(path.dir, el);
-          reflected.lastHit = hit.object;
-          if(!el.props.flat) reflected.q = el.abcd(reflected.q);
-          const phase = 1;
-          reflected.J = [ path.J[0].mul(Math.sqrt(refl)*phase), path.J[1].mul(Math.sqrt(refl)*(-1*phase)) ];
-          reflected.pts.push(reflected.pos.clone());
-          reflected.dirs.push(reflected.dir.clone());
-          reflected.widths.push( wFromQ(reflected.q, reflected.λ, reflected.M2) );
-          reflected.amps.push( jNorm(reflected.J) / reflected.Jnorm );
-          reflected.pos.add(reflected.dir.clone().multiplyScalar(1e-6));
-          if((jNorm(reflected.J)/reflected.Jnorm) >= AMP_CUTOFF) queue.push(reflected);
-        }
-
-        // Record strongest branch for mirror (reflect or transmit)
-        try{
-          let best = null, bestI = -1;
-          if(transmitted){
-            const It = Math.pow(jNorm(transmitted.J) / transmitted.Jnorm, 2);
-            if(It > bestI){ best = transmitted; bestI = It; }
-          }
-          if(reflected){
-            const Ir = Math.pow(jNorm(reflected.J) / path.Jnorm, 2);
-            if(Ir > bestI){ best = reflected; bestI = Ir; }
-          }
-          if(best){
-            const invq = best.q.inv();
-            const w_um = wFromQ(best.q, best.λ, best.M2) * 1e6;
-            const zR_m = best.q.im;
-            const w0_um = Math.sqrt(zR_m * best.λ * best.M2 / Math.PI) * 1e6;
-            const R_mm = (Math.abs(invq.re) < 1e-12) ? Infinity : (1 / invq.re) * 1e3;
-            const polAngles = polEllipseAngles(best.J);
-            elementLastInfo.set(el.id, {
-              aoi_deg: aoi_deg_hit,
-              incomingDir: incomingDir_hit,
-              x_mm: best.pos.x * 1e3,
-              y_mm: best.pos.y * 1e3,
-              z_mm: best.pos.z * 1e3,
-              w_um,
-              w0_um,
-              R_mm,
-              Irel: bestI,
-              psi_deg: polAngles.psiDeg,
-              chi_deg: polAngles.chiDeg,
-              z_to_waist_mm: best.q.re * 1e3,
-              zR_mm: zR_m * 1e3
-            });
-          }
-        } catch(e){}
+      // NEW: side wall of a spherical mirror is purely opaque (absorbing)
+      if (isCurvedMirror && surfaceKind === 'side') {
+        // Do not reflect or transmit; just terminate this path.
         break;
       }
+
+  // Base reflectance from slider
+  let refl = Math.min(1, Math.max(0, el.props.refl ?? 1));
+  let T = 1 - refl;
+
+  // Dichroic behavior (still defined the same way)
+  if (el.props.dichroic) {
+    const nm = path.λ * 1e9;
+    const inBand = (nm, band) => Number.isFinite(nm) && band && nm >= band.min && nm <= band.max;
+    if (inBand(nm, el.props.reflBand_nm))      { refl = 1; T = 0; }
+    else if (inBand(nm, el.props.transBand_nm)){ refl = 0; T = 1; }
+    else                                       { refl = 0; T = 1; } // outside bands -> transmit
+  }
+
+  // === Only the front **curved** surface uses refl slider ===
+  if (isCurvedMirror) {
+    // Back and side surfaces: 100% transmissive
+    // Also: front surface hit from *inside* -> no coating, transmit only
+    if (!isFront || isInsideMirror) {
+      refl = 0;
+      T = 1;
+    }
+  }
+  // Flat mirrors keep their original behavior (they use panel normal & refl).
+
+  const cloneBase = () => ({
+    pos: path.pos.clone(), q: path.q.clone(), traveled: path.traveled, lastHit: null,
+    maxLen: path.maxLen, λ: path.λ, Jnorm: path.Jnorm, M2: path.M2,
+    pts: path.pts.slice(), dirs: path.dirs.slice(), widths: path.widths.slice(),
+    amps: path.amps.slice(), polSamples: path.polSamples.slice(),
+    polSampleCountdown: path.polSampleCountdown,
+    nMedium: path.nMedium
+  });
+
+  let transmitted, reflected;
+
+  // ===== Transmitted branch (Snell) =====
+    if (T > 0) {
+  transmitted = cloneBase();
+
+  if (isCurvedMirror) {
+    // Use Snell's law through the local spherical surface,
+    // but handle total internal reflection when it occurs.
+    const n2 = isInsideMirror ? 1.0 : nMirror; // inside->air or air->mirror
+    const { dir: newDir, tir } = refractAcrossHitNormal(path.dir, hit, nCurr, n2, el);
+    transmitted.dir = newDir;
+
+    if (tir) {
+      // TIR: stay in the same medium (inside the mirror substrate)
+      transmitted.nMedium = nCurr;
+      // No transmission ABCD here because there is no transmitted beam.
+    } else {
+      transmitted.nMedium = n2;
+
+      // Gaussian-beam update at EACH physical surface, with proper n1/n2 and R sign
+      if (typeof el.abcdTransmit === "function") {
+        transmitted.q = el.abcdTransmit(transmitted.q, {
+          surfaceKind,
+          n1: nCurr,   // index on incident side of this surface
+          n2          // index on transmitted side
+        });
+      }
+    }
+  } else {
+    // Flat mirror transmission: no refraction or focusing
+    transmitted.dir = path.dir.clone();
+    transmitted.nMedium = path.nMedium;
+  }
+
+  transmitted.lastHit = hit.object;
+  transmitted.J = [
+    path.J[0].mul(Math.sqrt(T)),
+    path.J[1].mul(Math.sqrt(T))
+  ];
+    transmitted.pts.push(transmitted.pos.clone());
+    transmitted.dirs.push(transmitted.dir.clone());
+    transmitted.widths.push( wFromQ(transmitted.q, transmitted.λ, transmitted.M2) );
+    transmitted.amps.push( jNorm(transmitted.J) / transmitted.Jnorm );
+    transmitted.pos.add(transmitted.dir.clone().multiplyScalar(1e-6));
+    if ((jNorm(transmitted.J) / transmitted.Jnorm) >= AMP_CUTOFF) queue.push(transmitted);
+  }
+
+
+  // ===== Reflected branch =====
+  if (refl > 0) {
+    reflected = cloneBase();
+
+    if (isCurvedMirror) {
+      // Reflect around local surface normal
+      reflected.dir = reflectAcrossHitNormal(path.dir, hit, el);
+      reflected.nMedium = nCurr; // stay in same medium
+    } else {
+      // Flat mirror: keep old planar normal behavior
+      reflected.dir = reflectAcrossElementNormal(path.dir, el);
+      reflected.nMedium = path.nMedium;
+    }
+
+    reflected.lastHit = hit.object;
+    if (!el.props.flat) reflected.q = el.abcd(reflected.q);
+
+    const phase = 1;
+    reflected.J = [
+      path.J[0].mul(Math.sqrt(refl) * phase),
+      path.J[1].mul(Math.sqrt(refl) * (-1 * phase))
+    ];
+    reflected.pts.push(reflected.pos.clone());
+    reflected.dirs.push(reflected.dir.clone());
+    reflected.widths.push( wFromQ(reflected.q, reflected.λ, reflected.M2) );
+    reflected.amps.push( jNorm(reflected.J) / reflected.Jnorm );
+    reflected.pos.add(reflected.dir.clone().multiplyScalar(1e-6));
+    if ((jNorm(reflected.J) / reflected.Jnorm) >= AMP_CUTOFF) queue.push(reflected);
+  }
+
+  // ===== Record strongest branch (unchanged logic) =====
+  try {
+    let best = null, bestI = -1;
+    if (transmitted) {
+      const It = Math.pow(jNorm(transmitted.J) / transmitted.Jnorm, 2);
+      if (It > bestI) { best = transmitted; bestI = It; }
+    }
+    if (reflected) {
+      const Ir = Math.pow(jNorm(reflected.J) / path.Jnorm, 2);
+      if (Ir > bestI) { best = reflected; bestI = Ir; }
+    }
+    if (best) {
+      const invq = best.q.inv();
+      const w_um = wFromQ(best.q, best.λ, best.M2) * 1e6;
+      const zR_m = best.q.im;
+      const w0_um = Math.sqrt(zR_m * best.λ * best.M2 / Math.PI) * 1e6;
+      const R_mm = (Math.abs(invq.re) < 1e-12) ? Infinity : (1 / invq.re) * 1e3;
+      const polAngles = polEllipseAngles(best.J);
+      elementLastInfo.set(el.id, {
+        aoi_deg: aoi_deg_hit,
+        incomingDir: incomingDir_hit,
+        x_mm: best.pos.x * 1e3,
+        y_mm: best.pos.y * 1e3,
+        z_mm: best.pos.z * 1e3,
+        w_um,
+        w0_um,
+        R_mm,
+        Irel: bestI,
+        psi_deg: polAngles.psiDeg,
+        chi_deg: polAngles.chiDeg,
+        z_to_waist_mm: best.q.re * 1e3,
+        zR_mm: zR_m * 1e3
+      });
+    }
+  } catch (e) {}
+  break;
+}
+
 
       /* ---------- Diffraction grating ---------- */
       if (el.type === "grating") {
@@ -488,7 +625,8 @@ export function recompute(context) {
           maxLen: path.maxLen, λ: path.λ, Jnorm: path.Jnorm, M2: path.M2,
           pts: path.pts.slice(), dirs: path.dirs.slice(), widths: path.widths.slice(),
           amps: path.amps.slice(), polSamples: path.polSamples.slice(),
-          polSampleCountdown: path.polSampleCountdown
+          polSampleCountdown: path.polSampleCountdown,
+          nMedium: path.nMedium
         });
 
         let _bestForThisGrating = null;
