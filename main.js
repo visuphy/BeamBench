@@ -194,30 +194,58 @@ function screenToWorldOnXZ(clientX, clientY) {
 
 function spawnAt(type, pos) {
     pos = pos || new THREE.Vector3(0, 0, 0);
+    let newObject = null; // Store the mesh/group to select
+
     switch (type) {
-        case 'source': Sources.addSource({ position: pos.clone(), yawRad: 0 }); break;
-        case 'lens': addElement(makeLens({ f: 1.0 }), pos); break;
-        case 'mirror': addElement(makeMirror({ flat: true, R: 2.0, refl: 1.0 }), pos); break;
-        case 'polarizer': addElement(makePolarizer({ axisDeg: 0 }), pos); break;
-        case 'waveplate': addElement(makeWaveplate({ type: 'HWP', delta: Math.PI }), pos); break;
-        case 'faraday': addElement(makeFaraday({ phiDeg: 45 }), pos); break;
-        case 'pbs': addElement(makeBeamSplitter({ R: 0.5, polarizing: false, polTransmit: 'Vertical' }), pos); break;
-        case 'beamblock': addElement(makeBeamBlock(), pos); break;
+        case 'source': 
+            const src = Sources.addSource({ position: pos.clone(), yawRad: 0 }); 
+            newObject = src.group;
+            break;
+        case 'lens': 
+            newObject = addElement(makeLens({ f: 1.0 }), pos).mesh; 
+            break;
+        case 'mirror': 
+            newObject = addElement(makeMirror({ flat: true, R: 2.0, refl: 1.0 }), pos).mesh; 
+            break;
+        case 'polarizer': 
+            newObject = addElement(makePolarizer({ axisDeg: 0 }), pos).mesh; 
+            break;
+        case 'waveplate': 
+            newObject = addElement(makeWaveplate({ type: 'HWP', delta: Math.PI }), pos).mesh; 
+            break;
+        case 'faraday': 
+            newObject = addElement(makeFaraday({ phiDeg: 45 }), pos).mesh; 
+            break;
+        case 'pbs': 
+            newObject = addElement(makeBeamSplitter({ R: 0.5, polarizing: false, polTransmit: 'Vertical' }), pos).mesh; 
+            break;
+        case 'beamblock': 
+            newObject = addElement(makeBeamBlock(), pos).mesh; 
+            break;
         case 'grating':
             const el = makeGrating({ mode: 'reflective', d_um: 1.0, orders: 3 });
             el.props.visibleOrders = {};
-            addElement(el, pos);
+            newObject = addElement(el, pos).mesh;
             break;
-        case 'multimeter': addElement(makeMultimeter(), pos); break;
+        case 'multimeter': 
+            newObject = addElement(makeMultimeter(), pos).mesh; 
+            break;
         case 'ruler':
             if (!Ruler.doesRulerExist()) {
                 const rulerContext = { scene, selectable, tcontrols, pushHistory: State.pushHistory, isRestoringState: State.isRestoring() };
                 const newRuler = Ruler.addRuler(rulerContext, pos);
                 if (newRuler) {
-                    tcontrols.attach(newRuler.points.p2);
+                    // Rulers are special; select the endpoint to enable deletion
+                    newObject = newRuler.points.p2;
                 }
             }
             break;
+    }
+
+    // IMMEDIATELY SELECT THE NEW OBJECT
+    // This ensures it is added to the 'selected' Set so Backspace/Delete works immediately.
+    if (newObject) {
+        _toggleSelection(newObject, false); // false = clear previous selection
     }
 }
 
