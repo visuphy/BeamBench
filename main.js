@@ -223,7 +223,7 @@ function spawnAt(type, pos) {
             newObject = addElement(makeBeamBlock(), pos).mesh; 
             break;
         case 'grating':
-            const el = makeGrating({ mode: 'reflective', d_um: 1.0, orders: 3 });
+            const el = makeGrating({ mode: 'reflective', d_um: 1.0, orders: 1 });
             el.props.visibleOrders = {};
             newObject = addElement(el, pos).mesh;
             break;
@@ -1318,7 +1318,11 @@ if (tag?.type === "mirror") {
         const e = elements.find(x => x.mesh === selObj); if (!e) return;
 
         ui.gr_mode = (e.props.mode === "transmissive") ? "Transmissive" : "Reflective";
+        
+        // Initialize both values based on the source of truth (e.props.d_um)
         ui.gr_d_um = e.props.d_um;
+        ui.gr_lines_mm = 1000 / e.props.d_um; // 1 mm = 1000 microns
+        
         ui.gr_orders = e.props.orders;
 
         elFolder.add(ui, "gr_mode", ["Reflective", "Transmissive"]).name("Type")
@@ -1329,11 +1333,40 @@ if (tag?.type === "mirror") {
                 State.pushHistory();
             });
 
+        // Define controllers for Spacing (d) and Density (Lines/mm)
         const cD = elFolder.add(ui, "gr_d_um", 0.05, 50, 0.001).name("Spacing d (µm)");
-        live(cD, v => {
-            e.props.d_um = Math.max(1e-6, Number(v));
-            updateElementLabel(e); GizmoUI.correctLabelScale(e.mesh, params.labelFontSize);
+        const cL = elFolder.add(ui, "gr_lines_mm", 20, 4000, 1).name("Lines/mm");
+
+        // Helper to sync visuals after property change
+        const updateGratingVisuals = () => {
+            updateElementLabel(e); 
+            GizmoUI.correctLabelScale(e.mesh, params.labelFontSize);
             doRecompute();
+        };
+
+        // Handle Spacing Slider Change (Drive lines/mm)
+        live(cD, v => {
+            const d = Math.max(1e-6, Number(v));
+            e.props.d_um = d;
+            
+            // Update coupled slider
+            ui.gr_lines_mm = 1000 / d;
+            cL.updateDisplay();
+            
+            updateGratingVisuals();
+        });
+
+        // Handle Lines/mm Slider Change (Drive d)
+        live(cL, v => {
+            const lines = Math.max(1, Number(v));
+            const d = 1000 / lines;
+            e.props.d_um = d;
+
+            // Update coupled slider
+            ui.gr_d_um = d;
+            cD.updateDisplay();
+
+            updateGratingVisuals();
         });
 
         const cM = elFolder.add(ui, "gr_orders", 0, 10, 1).name("± Orders");

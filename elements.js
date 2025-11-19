@@ -616,7 +616,7 @@ export function makeBeamBlock() {
   mesh.userData.element = el; updateElementLabel(el); return el;
 }
 
-export function makeGrating({mode="reflective", d_um=1.0, orders=3} = {}) {
+export function makeGrating({mode="reflective", d_um=1.0, orders=1} = {}) {
   const mesh = makePanel(0.0042, 0.0042, matGrating);
   const el = {
     id: ELEMENT_ID++, type:"grating", mesh, props:{ mode, d_um, orders },
