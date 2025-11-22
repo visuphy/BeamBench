@@ -474,10 +474,10 @@ function attachUGIAxis(el){
 }
 
 /* ----------------- Factories ----------------- */
-export function makeLens({f=1.0}={}){
+export function makeLens({f=1.0, label}={}){
   const mesh = makePanel(0.0036,0.0036, matLens);
   const el = {
-    id: ELEMENT_ID++, type:"lens", mesh, props:{ f },
+    id: ELEMENT_ID++, type:"lens", mesh, props:{ f, label },
     abcd(q){ const A=1, B=0, C=-1/this.props.f, D=1; const Aq = q.clone().mul(new Complex(A,0)); const num = Aq.add(B); const Cq = q.clone().mul(new Complex(C,0)); const den = Cq.add(D); return num.div(den); },
     jones(j){ return j; }
   };
@@ -492,12 +492,13 @@ export function makeMirror({
   dichroic = false,
   reflBand_nm = { min: 400, max: 700 },
   transBand_nm = { min: 700, max: 1100 },
-  thickness = 1.8e-4      // NEW: default ~0.18 mm
+  thickness = 1.8e-4,
+  label
 } = {}) {
   const mesh = makePanel(0.004,0.004, matMirror);
   const el = {
     id: ELEMENT_ID++, type: "mirror", mesh,
-    props: { flat, R, refl, n, dichroic, reflBand_nm, transBand_nm, thickness },
+    props: { flat, R, refl, n, dichroic, reflBand_nm, transBand_nm, thickness, label },
 
     // Reflection on curved surface (unchanged)
     abcd(q){
@@ -568,67 +569,67 @@ export function makeMirror({
   return el;
 }
 
-export function makePolarizer({axisDeg=0}={}){
+export function makePolarizer({axisDeg=0, label}={}){
   const mesh = makePanel(0.0036,0.0036, matGlass);
   const el = {
-    id: ELEMENT_ID++, type:"polarizer", mesh, props:{ axisDeg },
+    id: ELEMENT_ID++, type:"polarizer", mesh, props:{ axisDeg, label },
     abcd(q){ return q; },
     jones(j, ctx){ const th = axisAngleInUV(this, ctx, this.props.axisDeg); return Rtheta(-th).mul(MPol).mul(Rtheta(th)).mulVec(j); }
   };
   mesh.userData.element = el; updateElementLabel(el); attachUGIAxis(el); return el;
 }
 
-export function makeWaveplate({type="HWP", delta=Math.PI, axisDeg = 0}={}){
+export function makeWaveplate({type="HWP", delta=Math.PI, axisDeg = 0, label}={}){
   const mesh = makePanel(0.0036,0.0036, matWave);
   const el = {
-    id: ELEMENT_ID++, type:"waveplate", mesh, props:{ delta, type, axisDeg },
+    id: ELEMENT_ID++, type:"waveplate", mesh, props:{ delta, type, axisDeg, label },
     abcd(q){ return q; },
     jones(j, ctx){ const th = axisAngleInUV(this, ctx, this.props.axisDeg); return Rtheta(-th).mul(MWaveplate(this.props.delta)).mul(Rtheta(th)).mulVec(j); }
   };
   mesh.userData.element = el; updateElementLabel(el); attachUGIAxis(el); return el;
 }
 
-export function makeFaraday({phiDeg=45}={}){
+export function makeFaraday({phiDeg=45, label}={}){
   const mesh = makePanel(0.0036,0.0036, matFaraday);
   const el = {
-    id: ELEMENT_ID++, type:"faraday", mesh, props:{ phiDeg },
+    id: ELEMENT_ID++, type:"faraday", mesh, props:{ phiDeg, label },
     abcd(q){ return q; },
     jones(j, ctx){ const phi = THREE.MathUtils.degToRad(this.props.phiDeg || 0); const qW = this.mesh.getWorldQuaternion(new THREE.Quaternion()); const nW = new THREE.Vector3(0,0,1).applyQuaternion(qW).normalize(); const k  = (ctx && ctx.dir ? ctx.dir.clone().normalize() : new THREE.Vector3(0,0,1)); const sameFace = nW.dot(k) >= 0; const sgn = sameFace ? 1 : -1; return Rtheta(-sgn * phi).mulVec(j); }
   };
   mesh.userData.element = el; updateElementLabel(el); return el;
 }
 
-export function makeBeamSplitter({R=0.5, polarizing=false, polTransmit="Vertical"} = {}) {
+export function makeBeamSplitter({R=0.5, polarizing=false, polTransmit="Vertical", label} = {}) {
   const mesh = makePanel(0.0036, 0.0036, matBS);
   const el = {
-    id: ELEMENT_ID++, type:"beamSplitter", mesh, props:{ R, polarizing, polTransmit },
+    id: ELEMENT_ID++, type:"beamSplitter", mesh, props:{ R, polarizing, polTransmit, label },
     abcd(q){ return q; }, jones(j){ return j; }
   };
   mesh.userData.element = el; updateElementLabel(el); return el;
 }
 
-export function makeBeamBlock() {
+export function makeBeamBlock({label} = {}) {
   const mesh = makePanel(0.0042, 0.0042, matBlock);
   const el = {
-    id: ELEMENT_ID++, type:"beamBlock", mesh, props:{},
+    id: ELEMENT_ID++, type:"beamBlock", mesh, props:{ label },
     abcd(q){ return q; }, jones(j){ return j; }
   };
   mesh.userData.element = el; updateElementLabel(el); return el;
 }
 
-export function makeGrating({mode="reflective", d_um=1.0, orders=1} = {}) {
+export function makeGrating({mode="reflective", d_um=1.0, orders=1, label} = {}) {
   const mesh = makePanel(0.0042, 0.0042, matGrating);
   const el = {
-    id: ELEMENT_ID++, type:"grating", mesh, props:{ mode, d_um, orders },
+    id: ELEMENT_ID++, type:"grating", mesh, props:{ mode, d_um, orders, label },
     abcd(q){ return q; }, jones(j){ return j; }
   };
   mesh.userData.element = el; updateElementLabel(el); return el;
 }
 
-export function makeMultimeter(){
+export function makeMultimeter({label} = {}){
   const mesh = makePanel(0.0034, 0.0034, matMeter);
   const el = {
-    id: ELEMENT_ID++, type:"multimeter", mesh, props:{},
+    id: ELEMENT_ID++, type:"multimeter", mesh, props:{ label },
     abcd(q){ return q; }, jones(j){ return j; }
   };
   mesh.userData.element = el; updateElementLabel(el); return el;
