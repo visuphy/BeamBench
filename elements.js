@@ -5,7 +5,7 @@
 
 // elements.js — Three.js optics elements, labels, and helpers
 import * as THREE from 'three';
-import { Complex, Rtheta, MWaveplate, MPol } from './optics.js';
+import { Complex, Rtheta, MWaveplate, MPol } from './optics.js?v=1.0.1';
 
 let ELEMENT_ID = 1;
 

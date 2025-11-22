@@ -5,9 +5,9 @@
 
 // propagation.js - handles ray marching, Gaussian beam physics, and ribbon generation
 import * as THREE from 'three';
-import { Complex, jNorm } from './optics.js';
-import { buildRibbon } from './ribbon.js';
-import * as pol from './polarization.js';
+import { Complex, jNorm } from './optics.js?v=1.0.1';
+import { buildRibbon } from './ribbon.js?v=1.0.1';
+import * as pol from './polarization.js?v=1.0.1';
 
 const POL_SPACING = 0.005;
 

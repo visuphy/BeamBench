@@ -5,14 +5,14 @@
 
 // main.js — scene, GUI, multi-source Gaussian propagation with multimeter, gratings, PBS, unified mirror, dichroic, blocks, broadband sources
 import * as THREE from 'three';
-import { OrbitControls } from 'three/addons/controls/OrbitControls.js';
+import { OrbitControls } from 'three/addons/controls/OrbitControls.js?v=1.0.1';
 import GUI from 'https://cdn.jsdelivr.net/npm/lil-gui@0.18/+esm';
 
 // Import local modules
-import * as GizmoUI from './gizmo-ui.js';
-import * as Ruler from './ruler.js';
-import * as State from './state.js';
-import * as Sources from './sources.js';
+import * as GizmoUI from './gizmo-ui.js?v=1.0.1';
+import * as Ruler from './ruler.js?v=1.0.1';
+import * as State from './state.js?v=1.0.1';
+import * as Sources from './sources.js?v=1.0.1';
 import {
   clampToPlaneXZ,
   makeLens, makeMirror, makeMultimeter,
@@ -20,9 +20,9 @@ import {
   makeBeamSplitter, makeBeamBlock, makeGrating,
   updateElementLabel,
   refreshMirrorVisual
-} from './elements.js';
-import * as pol from './polarization.js';
-import * as Propagation from './propagation.js';
+} from './elements.js?v=1.0.1';
+import * as pol from './polarization.js?v=1.0.1';
+import * as Propagation from './propagation.js?v=1.0.1';
 
 /* ========= Scene ========= */
 const app = document.getElementById('app');
