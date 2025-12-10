@@ -6,7 +6,7 @@ BeamBench is an interactive, browser-based 3D sandbox for designing and simulati
 
 ### [🚀 Launch the Live Demo 🚀](https://visuphy.github.io/BeamBench/)
 
-![BeamBench Screenshot](Screenshot.png)
+![BeamBench Screenshot](Screenshot.webp)
 
 ## Key Features
 
