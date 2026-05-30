@@ -5,7 +5,7 @@
 
 // polarization.js — pooled, throttled polarization markers
 import * as THREE from 'three';
-import { buildTransverseBasis } from './beam-frame.js?v=1.0.1';
+import { buildTransverseBasis } from './beam-frame.js?v=1.0.7';
 
 // Define a fixed, nominal wavelength (e.g., 550nm green) for all visualizations.
 const NOMINAL_WAVELENGTH_M = 550e-9;
@@ -64,9 +64,8 @@ export function addMarker(group, pos, dir, J, options = {}){
     group.add(line);
   }
 
-  // Build transverse basis: u = +Y (vertical), v = u × k (horizontal)
-  // `buildTransverseBasis` keeps the marker frame perpendicular to the beam, including vertical segments.
-  const { k, u, v } = buildTransverseBasis(dir);
+  const preferredUp = options.basisHint?.isVector3 ? options.basisHint : undefined;
+  const { k, u, v } = buildTransverseBasis(dir, preferredUp);
 
   // --- Wavelength Normalization Logic ---
   const inputPhase = options.phase || 0;

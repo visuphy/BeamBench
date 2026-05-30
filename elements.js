@@ -6,7 +6,7 @@
 // elements.js — Three.js optics elements, labels, and helpers
 import * as THREE from 'three';
 import { Complex, Rtheta, MWaveplate, MPol } from './optics.js?v=1.0.1';
-import { buildTransverseBasis } from './beam-frame.js?v=1.0.1';
+import { buildTransverseBasis } from './beam-frame.js?v=1.0.7';
 
 let ELEMENT_ID = 1;
 
@@ -694,7 +694,8 @@ function axisAngleInUV(el, ctx, axisDeg){
   const yW = new THREE.Vector3(0,1,0).applyQuaternion(qW).normalize();
   const thL = THREE.MathUtils.degToRad(axisDeg);
   const aW = xW.clone().multiplyScalar(Math.cos(thL)).add(yW.clone().multiplyScalar(Math.sin(thL))).normalize();
-  const { u, v } = buildTransverseBasis(ctx?.dir || new THREE.Vector3(0,0,1));
+  const preferredUp = ctx?.basisHint?.isVector3 ? ctx.basisHint : undefined;
+  const { u, v } = buildTransverseBasis(ctx?.dir || new THREE.Vector3(0,0,1), preferredUp);
   return Math.atan2(aW.dot(u), aW.dot(v));
 }
 

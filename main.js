@@ -20,10 +20,10 @@ import {
   makeBeamSplitter, makeBeamBlock, makeGrating,
   updateElementLabel,
   refreshMirrorVisual, refreshThickLensVisual
-} from './elements.js?v=1.0.1';
-import * as pol from './polarization.js?v=1.0.1';
-import * as Propagation from './propagation.js?v=1.0.1';
-import { buildTransverseBasis } from './beam-frame.js?v=1.0.1';
+} from './elements.js?v=1.0.7';
+import * as pol from './polarization.js?v=1.0.7';
+import * as Propagation from './propagation.js?v=1.0.8';
+import { buildTransverseBasis } from './beam-frame.js?v=1.0.7';
 
 /* ========= Scene ========= */
 const app = document.getElementById('app');
@@ -922,7 +922,8 @@ function svgPolEllipse(info) {
 
     let axisLabels = '';
     if (dir?.isVector3) {
-        const { u, v } = buildTransverseBasis(dir);
+        const preferredUp = info?.basisHint?.isVector3 ? info.basisHint : undefined;
+        const { u, v } = buildTransverseBasis(dir, preferredUp);
         axisLabels = [
             `<text x="66" y="-4" fill="#7d8590" font-size="10" text-anchor="start">H≈${dominantAxisLabel(v)}</text>`,
             `<text x="4" y="-48" fill="#7d8590" font-size="10" text-anchor="start">V≈${dominantAxisLabel(u)}</text>`
@@ -959,7 +960,8 @@ function svgPolEllipsePanel(info) {
 
     let axisLabels = '';
     if (dir?.isVector3) {
-        const { u, v } = buildTransverseBasis(dir);
+        const preferredUp = info?.basisHint?.isVector3 ? info.basisHint : undefined;
+        const { u, v } = buildTransverseBasis(dir, preferredUp);
         axisLabels = [
             `<text x="72" y="-2" fill="#7d8590" font-size="10" text-anchor="end" dominant-baseline="middle">H&#8776;${dominantAxisLabel(v)}</text>`,
             `<text x="0" y="-50" fill="#7d8590" font-size="10" text-anchor="middle">V&#8776;${dominantAxisLabel(u)}</text>`

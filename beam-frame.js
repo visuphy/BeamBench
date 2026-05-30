@@ -16,11 +16,18 @@ export function buildTransverseBasis(dir, preferredUp = WORLD_UP){
   k.normalize();
 
   let u = null;
-  for (const ref of [preferredUp, WORLD_X, WORLD_Z]) {
-    const candidate = ref.clone().sub(k.clone().multiplyScalar(ref.dot(k)));
-    if (candidate.lengthSq() > BASIS_EPS) {
-      u = candidate.normalize();
-      break;
+  const preferred = preferredUp.clone().sub(k.clone().multiplyScalar(preferredUp.dot(k)));
+  if (preferred.lengthSq() > BASIS_EPS) {
+    u = preferred.normalize();
+  } else if (Math.abs(k.y) > 0.9) {
+    u = WORLD_Z.clone().multiplyScalar(k.y >= 0 ? -1 : 1);
+  } else {
+    for (const ref of [WORLD_Z, WORLD_X]) {
+      const candidate = ref.clone().sub(k.clone().multiplyScalar(ref.dot(k)));
+      if (candidate.lengthSq() > BASIS_EPS) {
+        u = candidate.normalize();
+        break;
+      }
     }
   }
 

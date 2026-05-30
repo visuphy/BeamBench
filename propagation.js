@@ -7,12 +7,13 @@
 import * as THREE from 'three';
 import { Complex, jNorm } from './optics.js?v=1.0.1';
 import { buildRibbon } from './ribbon.js?v=1.0.1';
-import { buildTransverseBasis } from './beam-frame.js?v=1.0.1';
-import * as pol from './polarization.js?v=1.0.1';
+import * as pol from './polarization.js?v=1.0.7';
 
 const POL_SPACING = 0.005;
 const LAMBDA_KEY = "\u03bb";
 const MAX_RAY_SEEDS = 800;
+const WORLD_UP = new THREE.Vector3(0, 1, 0);
+const VERTICAL_RAY_DOT = 0.98;
 
 /* ========= Wavelength to Color Helper ========= */
 function wavelengthNmToHex(nm){
@@ -112,37 +113,31 @@ function refractAcrossHitNormal(dirv, hit, n1, n2, el){
   return { dir: dirOut, tir: false };
 }
 
-function _reflectVectorAcrossNormal(vec, normal){
-  return vec.clone().sub(normal.clone().multiplyScalar(2 * vec.dot(normal)));
+function _cloneBasisHint(hint){
+  return hint?.isVector3 ? hint.clone() : null;
 }
 
-function _jonesToWorldField(J, dir){
-  const { u, v } = buildTransverseBasis(dir);
-  return {
-    real: new THREE.Vector3()
-      .addScaledVector(v, J[0].re)
-      .addScaledVector(u, J[1].re),
-    imag: new THREE.Vector3()
-      .addScaledVector(v, J[0].im)
-      .addScaledVector(u, J[1].im)
-  };
-}
+function _verticalReflectionBasisHint(inDir, outDir){
+  if (!inDir?.isVector3 || !outDir?.isVector3) return null;
+  const out = outDir.clone();
+  if (!Number.isFinite(out.lengthSq()) || out.lengthSq() < 1e-12) return null;
+  out.normalize();
+  const yDot = out.dot(WORLD_UP);
+  if (Math.abs(yDot) < VERTICAL_RAY_DOT) return null;
 
-function _worldFieldToJones(field, dir){
-  const { u, v } = buildTransverseBasis(dir);
-  return [
-    new Complex(field.real.dot(v), field.imag.dot(v)),
-    new Complex(field.real.dot(u), field.imag.dot(u))
-  ];
+  const hint = inDir.clone().multiplyScalar(yDot >= 0 ? -1 : 1);
+  hint.sub(out.clone().multiplyScalar(hint.dot(out)));
+  if (!Number.isFinite(hint.lengthSq()) || hint.lengthSq() < 1e-12) return null;
+  return hint.normalize();
 }
 
 function _reflectJones(J, inDir, outDir, normal, amplitude=1){
-  const field = _jonesToWorldField(J, inDir);
-  const reflectedField = {
-    real: _reflectVectorAcrossNormal(field.real, normal).multiplyScalar(-amplitude),
-    imag: _reflectVectorAcrossNormal(field.imag, normal).multiplyScalar(-amplitude)
-  };
-  return _worldFieldToJones(reflectedField, outDir);
+  void inDir; void outDir; void normal;
+  // Mirror reflection reverses handedness in the outgoing right-handed Jones frame.
+  return [
+    J[0].mul(amplitude),
+    J[1].mul(-amplitude)
+  ];
 }
 
 
@@ -258,6 +253,7 @@ export function recompute(context) {
     z_to_waist_mm: metrics.z_to_waist_mm,
     zR_mm: metrics.zR_mm,
     outgoingDir: p.dir.clone(),
+    basisHint: _cloneBasisHint(p.basisHint),
     jones: [p.J[0].clone(), p.J[1].clone()],
     ...extra
   });
@@ -348,6 +344,7 @@ export function recompute(context) {
         return {
           pos: rayOrigin.clone(),
           dir: dir.clone(),
+          basisHint: null,
           q: new Complex(0, 1e9), // placeholder q; rays mode keeps fixed radius
           J: [jScaled[0].clone(), jScaled[1].clone()],
           Jnorm: jNorm0,
@@ -393,6 +390,7 @@ export function recompute(context) {
       return {
         pos: originCenter.clone(),
         dir: dir.clone(),
+        basisHint: null,
         q: q0.clone(),
         J: [jScaled[0].clone(), jScaled[1].clone()],
         Jnorm: jNorm0,
@@ -478,7 +476,7 @@ const AMP_CUTOFF = 0.02;
                 const k_phase = (2 * Math.PI) / getPathLambda(path);
                 const totalDist = path.traveled + sampleDistInSeg;
                 const spatialPhase = k_phase * totalDist;
-                path.polSamples.push({ p, dir: path.dir.clone(), j: [path.J[0].clone(), path.J[1].clone()], phase: spatialPhase, wavelength: getPathLambda(path) });
+                path.polSamples.push({ p, dir: path.dir.clone(), basisHint: _cloneBasisHint(path.basisHint), j: [path.J[0].clone(), path.J[1].clone()], phase: spatialPhase, wavelength: getPathLambda(path) });
                 path.polSampleCountdown += POL_SPACING;
             }
         }
@@ -556,6 +554,7 @@ const AMP_CUTOFF = 0.02;
 
         const cloneBase = () => ({
           pos: path.pos.clone(), q: path.q.clone(), traveled: path.traveled, lastHit: null,
+          basisHint: _cloneBasisHint(path.basisHint),
           maxLen: path.maxLen, [LAMBDA_KEY]: getPathLambda(path), Jnorm: path.Jnorm, M2: path.M2,
           beamModel: path.beamModel, rayRadius_m: path.rayRadius_m,
           pts: path.pts.slice(), dirs: path.dirs.slice(), widths: path.widths.slice(),
@@ -566,6 +565,7 @@ const AMP_CUTOFF = 0.02;
 
         const transmitted = cloneBase();
         transmitted.dir = path.dir.clone();
+        transmitted.basisHint = _cloneBasisHint(path.basisHint);
         transmitted.lastHit = hit.object; // Prevent back-face reflection
         if(isPBS){
           transmitted.J = wantTransmit ? [ new Complex(0,0), path.J[1].clone() ]
@@ -583,6 +583,7 @@ const AMP_CUTOFF = 0.02;
 
         const reflected = cloneBase();
         reflected.dir = reflectAcrossElementNormal(path.dir, el);
+        reflected.basisHint = _verticalReflectionBasisHint(path.dir, reflected.dir);
         reflected.lastHit = hit.object;
         const reflectNormal = _elementWorldNormal(el);
         if(isPBS){
@@ -659,6 +660,7 @@ const AMP_CUTOFF = 0.02;
 
   const cloneBase = () => ({
     pos: path.pos.clone(), q: path.q.clone(), traveled: path.traveled, lastHit: null,
+    basisHint: _cloneBasisHint(path.basisHint),
     maxLen: path.maxLen, [LAMBDA_KEY]: getPathLambda(path), Jnorm: path.Jnorm, M2: path.M2,
     beamModel: path.beamModel, rayRadius_m: path.rayRadius_m,
     pts: path.pts.slice(), dirs: path.dirs.slice(), widths: path.widths.slice(),
@@ -679,6 +681,7 @@ const AMP_CUTOFF = 0.02;
     const n2 = isInsideMirror ? 1.0 : nMirror; // inside->air or air->mirror
     const { dir: newDir, tir } = refractAcrossHitNormal(path.dir, hit, nCurr, n2, el);
     transmitted.dir = newDir;
+    transmitted.basisHint = _cloneBasisHint(path.basisHint);
 
     if (tir) {
       // TIR: stay in the same medium (inside the mirror substrate)
@@ -699,6 +702,7 @@ const AMP_CUTOFF = 0.02;
   } else {
     // Flat mirror transmission: no refraction or focusing
     transmitted.dir = path.dir.clone();
+    transmitted.basisHint = _cloneBasisHint(path.basisHint);
     transmitted.nMedium = path.nMedium;
   }
 
@@ -725,11 +729,13 @@ const AMP_CUTOFF = 0.02;
       // Reflect around local surface normal
       reflectNormal = _hitWorldNormal(hit, el);
       reflected.dir = reflectAcrossHitNormal(path.dir, hit, el);
+      reflected.basisHint = _verticalReflectionBasisHint(path.dir, reflected.dir);
       reflected.nMedium = nCurr; // stay in same medium
     } else {
       // Flat mirror: keep old planar normal behavior
       reflectNormal = _elementWorldNormal(el);
       reflected.dir = reflectAcrossElementNormal(path.dir, el);
+      reflected.basisHint = _verticalReflectionBasisHint(path.dir, reflected.dir);
       reflected.nMedium = path.nMedium;
     }
 
@@ -787,6 +793,7 @@ const AMP_CUTOFF = 0.02;
 
         const { dir: newDir, tir } = refractAcrossHitNormal(path.dir, hit, nCurr, n2, el);
         path.dir.copy(newDir);
+        path.basisHint = null;
 
         if (!tir) {
           path.nMedium = n2;
@@ -831,6 +838,7 @@ const AMP_CUTOFF = 0.02;
 
         const cloneBase = () => ({
           pos: path.pos.clone(), q: path.q.clone(), traveled: path.traveled, lastHit: null,
+          basisHint: _cloneBasisHint(path.basisHint),
           maxLen: path.maxLen, [LAMBDA_KEY]: getPathLambda(path), Jnorm: path.Jnorm, M2: path.M2,
           beamModel: path.beamModel, rayRadius_m: path.rayRadius_m,
           pts: path.pts.slice(), dirs: path.dirs.slice(), widths: path.widths.slice(),
@@ -848,11 +856,12 @@ const AMP_CUTOFF = 0.02;
           }
           const branch = cloneBase();
           branch.dir = o.dir.clone();
+          branch.basisHint = isReflective ? _verticalReflectionBasisHint(path.dir, branch.dir) : null;
           branch.lastHit = hit.object; // Prevent back-face reflection/transmission
 
           if (isReflective) {
             // Mirror-like polarization behavior on reflection:
-            // Ex gets a - sign, Ey gets a + sign (same as your mirror block)
+            // Preserve handedness convention while splitting amplitude between orders.
             const phase = 1;
             branch.J = [
               path.J[0].mul(gain * phase),
@@ -960,6 +969,7 @@ const AMP_CUTOFF = 0.02;
           .add(v.clone().multiplyScalar(sv2))
           .normalize();
         path.dir.copy(newDir);
+        path.basisHint = null;
 
         
         // Record output beam state for lens
@@ -987,7 +997,7 @@ const AMP_CUTOFF = 0.02;
       if (path.beamModel !== "rays") {
         path.q = el.abcd(path.q);
       }
-      path.J = (el.jones ? el.jones(path.J, {dir:path.dir.clone()}) : path.J);
+      path.J = (el.jones ? el.jones(path.J, {dir:path.dir.clone(), basisHint:_cloneBasisHint(path.basisHint)}) : path.J);
 
       // Record output beam state for this element
       try {
@@ -1017,7 +1027,7 @@ const AMP_CUTOFF = 0.02;
     if(mesh){ ribbonMeshes.push(mesh); beamGroup.add(mesh); }
     if(params.showPolarization){
       for (const s of p.polSamples){
-        if (!pol.addMarker(polGroup, s.p, s.dir, s.j, { phase: s.phase, wavelength: s.wavelength })) break;
+        if (!pol.addMarker(polGroup, s.p, s.dir, s.j, { phase: s.phase, wavelength: s.wavelength, basisHint: s.basisHint })) break;
       }
     }
   });
