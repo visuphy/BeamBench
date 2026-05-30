@@ -170,6 +170,9 @@ function restoreState(state) {
             if (newEl.type === 'mirror' && typeof _context.refreshMirrorVisual === 'function') {
                 _context.refreshMirrorVisual(newEl);
             }
+            if (newEl.type === 'thickLens' && typeof _context.refreshThickLensVisual === 'function') {
+                _context.refreshThickLensVisual(newEl);
+            }
         }
     });
 

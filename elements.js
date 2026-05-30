@@ -6,6 +6,7 @@
 // elements.js — Three.js optics elements, labels, and helpers
 import * as THREE from 'three';
 import { Complex, Rtheta, MWaveplate, MPol } from './optics.js?v=1.0.1';
+import { buildTransverseBasis } from './beam-frame.js?v=1.0.1';
 
 let ELEMENT_ID = 1;
 
@@ -17,6 +18,7 @@ const matWave    = new THREE.MeshStandardMaterial({ color:0xffd6a6, metalness:0.
 const matFaraday = new THREE.MeshStandardMaterial({ color:0xe6c9ff, metalness:0.1, roughness:0.35, transparent:true, opacity:0.85, side: commonSide });
 const matMirror  = new THREE.MeshStandardMaterial({ color:0xf0eded, metalness:0.1, roughness:0.15, side: commonSide });
 const matMirrorSide = new THREE.MeshStandardMaterial({ color: 0x707070, metalness: 0.1, roughness: 1.0, side: commonSide, transparent: true });
+const matThickLensSide = new THREE.MeshStandardMaterial({ color: 0x54718a, metalness: 0.08, roughness: 0.65, side: commonSide, transparent: true, opacity: 0.65 });
 const matBS      = new THREE.MeshStandardMaterial({ color: 0xc7d6ff, metalness:0.2, roughness:0.3,  transparent:true, opacity:0.85, side: THREE.DoubleSide });
 const matBlock   = new THREE.MeshStandardMaterial({ color:0x444b5a, metalness:0.2, roughness:0.6, side: THREE.DoubleSide });
 const matGrating = new THREE.MeshStandardMaterial({ color:0xdcc2ff, metalness:0.2, roughness:0.35, transparent:true, opacity:0.9, side: THREE.DoubleSide });
@@ -131,6 +133,154 @@ function _buildSphericalPatchGeometry(worldW, worldH, R, segs = 96) {
   geom.computeBoundingBox();
   geom.computeBoundingSphere();
   return geom;
+}
+
+function _geometryZRange(geom){
+  const pos = geom?.getAttribute?.('position');
+  if (!pos) return { min: 0, max: 0 };
+  const arr = pos.array;
+  let zMin = Infinity;
+  let zMax = -Infinity;
+  for (let i = 2; i < arr.length; i += 3) {
+    const z = arr[i];
+    if (z < zMin) zMin = z;
+    if (z > zMax) zMax = z;
+  }
+  if (!Number.isFinite(zMin) || !Number.isFinite(zMax)) return { min: 0, max: 0 };
+  return { min: zMin, max: zMax };
+}
+
+function _surfaceSagAndNormal(x, y, R){
+  if (!Number.isFinite(R) || Math.abs(R) < 1e-9) {
+    return { x, y, z: 0, nx: 0, ny: 0, nz: 1 };
+  }
+
+  const Ra = Math.abs(R);
+  let px = x;
+  let py = y;
+  let r2 = px * px + py * py;
+
+  if (r2 > Ra * Ra) {
+    const s = Ra / Math.sqrt(r2);
+    px *= s;
+    py *= s;
+    r2 = px * px + py * py;
+  }
+
+  const sgn = (R >= 0 ? 1 : -1);
+  const z = sgn * (Ra - Math.sqrt(Math.max(0, Ra * Ra - r2)));
+  const cx = 0;
+  const cy = 0;
+  const cz = sgn * Ra;
+
+  let nx = px - cx;
+  let ny = py - cy;
+  let nz = z - cz;
+  const invLen = 1.0 / Math.max(1e-12, Math.hypot(nx, ny, nz));
+  nx *= invLen;
+  ny *= invLen;
+  nz *= invLen;
+
+  return { x: px, y: py, z, nx, ny, nz };
+}
+
+function _applySurfaceProfile(geom, R){
+  const posAttr = geom.getAttribute('position');
+  const posArr = posAttr.array;
+  const nArr = new Float32Array(posArr.length);
+
+  for (let i = 0; i < posArr.length; i += 3) {
+    const x = posArr[i + 0];
+    const y = posArr[i + 1];
+    const s = _surfaceSagAndNormal(x, y, R);
+
+    posArr[i + 0] = s.x;
+    posArr[i + 1] = s.y;
+    posArr[i + 2] = s.z;
+
+    nArr[i + 0] = s.nx;
+    nArr[i + 1] = s.ny;
+    nArr[i + 2] = s.nz;
+  }
+
+  posAttr.needsUpdate = true;
+  geom.setAttribute('normal', new THREE.BufferAttribute(nArr, 3));
+  geom.getAttribute('normal').needsUpdate = true;
+}
+
+function _shiftGeometryZ(geom, dz){
+  const posAttr = geom.getAttribute('position');
+  const posArr = posAttr.array;
+  for (let i = 2; i < posArr.length; i += 3) posArr[i] += dz;
+  posAttr.needsUpdate = true;
+}
+
+function _buildSideWallFromMatchedSurfaces(frontGeom, backGeom){
+  const idxAttr = frontGeom.getIndex();
+  if (!idxAttr) return null;
+
+  const idx = idxAttr.array;
+  const posFront = frontGeom.getAttribute('position').array;
+  const posBack = backGeom.getAttribute('position').array;
+
+  const edgeMap = new Map();
+  const addEdge = (i1, i2) => {
+    const a = Math.min(i1, i2);
+    const b = Math.max(i1, i2);
+    const key = a + "_" + b;
+    const e = edgeMap.get(key);
+    if (e) e.count++;
+    else edgeMap.set(key, { a, b, count: 1 });
+  };
+
+  for (let i = 0; i < idx.length; i += 3) {
+    const a = idx[i];
+    const b = idx[i + 1];
+    const c = idx[i + 2];
+    addEdge(a, b);
+    addEdge(b, c);
+    addEdge(c, a);
+  }
+
+  const sidePositions = [];
+  const sideIndices = [];
+  let vBase = 0;
+
+  edgeMap.forEach(e => {
+    if (e.count !== 1) return;
+
+    const a = e.a;
+    const b = e.b;
+
+    const ax = posFront[3 * a], ay = posFront[3 * a + 1], az = posFront[3 * a + 2];
+    const bx = posFront[3 * b], by = posFront[3 * b + 1], bz = posFront[3 * b + 2];
+    const axb = posBack[3 * a], ayb = posBack[3 * a + 1], azb = posBack[3 * a + 2];
+    const bxb = posBack[3 * b], byb = posBack[3 * b + 1], bzb = posBack[3 * b + 2];
+
+    sidePositions.push(
+      ax, ay, az,
+      bx, by, bz,
+      axb, ayb, azb,
+      bxb, byb, bzb
+    );
+
+    sideIndices.push(
+      vBase, vBase + 1, vBase + 3,
+      vBase, vBase + 3, vBase + 2
+    );
+    vBase += 4;
+  });
+
+  if (!sidePositions.length) return null;
+
+  const sideGeom = new THREE.BufferGeometry();
+  sideGeom.setAttribute('position', new THREE.BufferAttribute(new Float32Array(sidePositions), 3));
+  sideGeom.setIndex(sideIndices);
+  sideGeom.computeVertexNormals();
+  sideGeom.computeBoundingBox();
+  sideGeom.computeBoundingSphere();
+
+  return sideGeom;
 }
 
 
@@ -415,6 +565,102 @@ export function refreshMirrorVisual(el) {
 
 }
 
+export function refreshThickLensVisual(el) {
+    if (!el?.mesh) return;
+    const collisionMesh = el.mesh;
+    const group = collisionMesh.children.find(c => c.isGroup);
+    if (!group) return;
+
+    while (group.children.length) group.remove(group.children[0]);
+    el._surfaceMeshes = [];
+    group.rotation.set(0, 0, 0);
+
+    const base = collisionMesh.geometry?.parameters || {};
+    const baseW = base.width ?? 0.004;
+    const baseH = base.height ?? 0.004;
+
+    const sx = collisionMesh.scale.x || 0;
+    const sy = collisionMesh.scale.y || 0;
+    const sz = collisionMesh.scale.z || 0;
+    const absSx = Math.abs(sx);
+    const absSy = Math.abs(sy);
+    const absSz = Math.abs(sz);
+
+    const worldW = baseW * absSx;
+    const worldH = baseH * absSy;
+
+    const invScaleX = 1 / Math.max(1e-9, absSx);
+    const invScaleY = 1 / Math.max(1e-9, absSy);
+    const invScaleZ = 1 / Math.max(1e-9, absSz);
+
+    const DEFAULT_THICKNESS = 0.004;
+    if (!Number.isFinite(el.props.thickness) || el.props.thickness <= 0) {
+        el.props.thickness = DEFAULT_THICKNESS;
+    }
+
+    const R1 = Number(el.props.R1);
+    const R2 = Number(el.props.R2);
+
+    const finiteRadii = [R1, R2]
+        .filter(r => Number.isFinite(r) && Math.abs(r) >= 1e-9)
+        .map(r => Math.abs(r));
+    const apertureRadius = finiteRadii.length ? Math.min(...finiteRadii) : Number.POSITIVE_INFINITY;
+
+    const baseGeom = Number.isFinite(apertureRadius)
+        ? _buildSphericalPatchGeometry(worldW, worldH, apertureRadius, 128)
+        : _buildSphericalPatchGeometry(worldW, worldH, 1e12, 128);
+
+    const frontGeom = baseGeom.clone();
+    const backGeom = baseGeom.clone();
+
+    _applySurfaceProfile(frontGeom, R1);
+    _applySurfaceProfile(backGeom, R2);
+
+    const frontRange = _geometryZRange(frontGeom);
+    const backRange = _geometryZRange(backGeom);
+    const thicknessMin = Math.max(1e-6, frontRange.max - backRange.min + 1e-6);
+    el.props._thicknessMin = thicknessMin;
+
+    let thickness = Number(el.props.thickness);
+    if (!Number.isFinite(thickness) || thickness < thicknessMin) {
+        thickness = Math.max(thicknessMin, DEFAULT_THICKNESS);
+        el.props.thickness = thickness;
+    }
+
+    _shiftGeometryZ(backGeom, thickness);
+
+    const sideGeom = _buildSideWallFromMatchedSurfaces(frontGeom, backGeom);
+    if (sideGeom) {
+        const side = new THREE.Mesh(sideGeom, matThickLensSide);
+        side.userData.isVisualOnly = true;
+        side.userData.element = el;
+        side.userData.surfaceKind = 'side';
+        side.scale.set(invScaleX, invScaleY, invScaleZ);
+        group.add(side);
+        el._surfaceMeshes.push(side);
+    }
+
+    frontGeom.computeBoundingBox();
+    frontGeom.computeBoundingSphere();
+    const front = new THREE.Mesh(frontGeom, matLens);
+    front.userData.isVisualOnly = true;
+    front.userData.element = el;
+    front.userData.surfaceKind = 'front';
+    front.scale.set(invScaleX, invScaleY, invScaleZ);
+    group.add(front);
+    el._surfaceMeshes.push(front);
+
+    backGeom.computeBoundingBox();
+    backGeom.computeBoundingSphere();
+    const back = new THREE.Mesh(backGeom, matLens);
+    back.userData.isVisualOnly = true;
+    back.userData.element = el;
+    back.userData.surfaceKind = 'back';
+    back.scale.set(invScaleX, invScaleY, invScaleZ);
+    group.add(back);
+    el._surfaceMeshes.push(back);
+}
+
 
 
 export function makeLabel(text){
@@ -448,9 +694,7 @@ function axisAngleInUV(el, ctx, axisDeg){
   const yW = new THREE.Vector3(0,1,0).applyQuaternion(qW).normalize();
   const thL = THREE.MathUtils.degToRad(axisDeg);
   const aW = xW.clone().multiplyScalar(Math.cos(thL)).add(yW.clone().multiplyScalar(Math.sin(thL))).normalize();
-  const k = ctx.dir.clone().normalize();
-  const u = new THREE.Vector3(0,1,0);
-  const v = new THREE.Vector3().crossVectors(u, k).normalize();
+  const { u, v } = buildTransverseBasis(ctx?.dir || new THREE.Vector3(0,0,1));
   return Math.atan2(aW.dot(u), aW.dot(v));
 }
 
@@ -482,6 +726,48 @@ export function makeLens({f=1.0, label}={}){
     jones(j){ return j; }
   };
   mesh.userData.element = el; updateElementLabel(el); return el;
+}
+
+export function makeThickLens({
+  R1 = 0.05,
+  R2 = -0.05,
+  n = 1.5,
+  thickness = 0.004,
+  label
+} = {}) {
+  const mesh = makePanel(0.004, 0.004, matLens);
+  const el = {
+    id: ELEMENT_ID++, type: "thickLens", mesh,
+    props: { R1, R2, n, thickness, label },
+    abcd(q){ return q; },
+    abcdTransmit(q, ctx = {}) {
+      const surfaceKind = ctx.surfaceKind || "front";
+      const n1 = Number.isFinite(ctx.n1) ? Number(ctx.n1) : 1.0;
+      const n2Raw = Number.isFinite(ctx.n2) ? Number(ctx.n2) : Number(this.props.n ?? 1.5);
+      const n2 = (Number.isFinite(n2Raw) && Math.abs(n2Raw) > 1e-12) ? n2Raw : 1.0;
+      const dirSign = Number.isFinite(ctx.dirSign) ? Number(ctx.dirSign) : 1;
+
+      let C = 0;
+      const Rsurf = (surfaceKind === "back") ? Number(this.props.R2) : Number(this.props.R1);
+      if (Number.isFinite(Rsurf) && Math.abs(Rsurf) >= 1e-9) {
+        const Reff = (dirSign >= 0) ? Rsurf : -Rsurf;
+        C = (n1 - n2) / (Reff * n2);
+      }
+
+      const D = n1 / n2;
+      const Aq = q.clone().mul(new Complex(1, 0));
+      const num = Aq.add(0);
+      const Cq = q.clone().mul(new Complex(C, 0));
+      const den = Cq.add(D);
+      return num.div(den);
+    },
+    jones(j){ return j; }
+  };
+
+  mesh.userData.element = el;
+  updateElementLabel(el);
+  refreshThickLensVisual(el);
+  return el;
 }
 
 export function makeMirror({
@@ -638,9 +924,12 @@ export function makeMultimeter({label} = {}){
 export function updateElementLabel(el){
     const customLabel = el.props.label;
     const hasCustomLabel = customLabel != null && customLabel.trim() !== '';
+    const fmtMm = (m, digits = 1) => Number.isFinite(m) ? (m * 1000).toFixed(digits) : "inf";
+    const fmtNum = (v, digits = 2, fallback = "inf") => Number.isFinite(v) ? Number(v).toFixed(digits) : fallback;
 
     const defaultText =
         el.type === "lens" ? `Thin Lens f=${(el.props.f * 1000).toFixed(1)} mm` :
+        el.type === "thickLens" ? `Thick Lens (R1=${fmtMm(el.props.R1)} mm, R2=${fmtMm(el.props.R2)} mm, n=${fmtNum(el.props.n, 2, "1.50")}, t=${fmtMm(el.props.thickness, 2)} mm)` :
         el.type === "mirror" ? (
             el.props.dichroic ?
             (el.props.flat ? `Mirror (Dichroic)` : `Mirror (R=${(el.props.R * 1000).toFixed(1)} mm, Dichroic)`) :

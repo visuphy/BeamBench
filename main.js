@@ -15,14 +15,15 @@ import * as State from './state.js?v=1.0.1';
 import * as Sources from './sources.js?v=1.0.1';
 import {
   clampToPlaneXZ,
-  makeLens, makeMirror, makeMultimeter,
+  makeLens, makeThickLens, makeMirror, makeMultimeter,
   makePolarizer, makeWaveplate, makeFaraday,
   makeBeamSplitter, makeBeamBlock, makeGrating,
   updateElementLabel,
-  refreshMirrorVisual
+  refreshMirrorVisual, refreshThickLensVisual
 } from './elements.js?v=1.0.1';
 import * as pol from './polarization.js?v=1.0.1';
 import * as Propagation from './propagation.js?v=1.0.1';
+import { buildTransverseBasis } from './beam-frame.js?v=1.0.1';
 
 /* ========= Scene ========= */
 const app = document.getElementById('app');
@@ -139,6 +140,31 @@ function clampMirrorSizeToR(mesh, R) {
   mesh.scale.y = signY * absY;
 }
 
+function clampThickLensSizeToR(mesh, R1, R2) {
+  if (!mesh?.geometry?.parameters) return;
+
+  const radii = [R1, R2]
+    .map(r => Math.abs(Number(r)))
+    .filter(r => Number.isFinite(r) && r > 1e-9);
+  if (!radii.length) return;
+
+  const minR = Math.min(...radii);
+  const baseW = mesh.geometry.parameters.width || 0.004;
+  const baseH = mesh.geometry.parameters.height || 0.004;
+
+  const signX = Math.sign(mesh.scale.x) || 1;
+  const signY = Math.sign(mesh.scale.y) || 1;
+  const absX = Math.abs(mesh.scale.x);
+  const absY = Math.abs(mesh.scale.y);
+
+  const halfDiag = 0.5 * Math.hypot(baseW * absX, baseH * absY);
+  if (!Number.isFinite(halfDiag) || halfDiag <= minR || halfDiag <= 0) return;
+
+  const scaleFactor = minR / halfDiag;
+  mesh.scale.x = signX * absX * scaleFactor;
+  mesh.scale.y = signY * absY * scaleFactor;
+}
+
 
 
 /* ========= GUI ========= */
@@ -201,8 +227,15 @@ function spawnAt(type, pos) {
             const src = Sources.addSource({ position: pos.clone(), yawRad: 0 }); 
             newObject = src.group;
             break;
+        case 'raysSource':
+            const raysSrc = Sources.addSource({ position: pos.clone(), yawRad: 0, mode: 'rays' });
+            newObject = raysSrc.group;
+            break;
         case 'lens': 
             newObject = addElement(makeLens({ f: 1.0 }), pos).mesh; 
+            break;
+        case 'thickLens':
+            newObject = addElement(makeThickLens({ R1: 0.05, R2: -0.05, n: 1.5, thickness: 0.004 }), pos).mesh;
             break;
         case 'mirror': 
             newObject = addElement(makeMirror({ flat: true, R: 2.0, refl: 1.0 }), pos).mesh; 
@@ -338,6 +371,30 @@ let lastClicked = null;              // for focus when needed
 const multiPivot = new THREE.Object3D(); // invisible gizmo pivot
 scene.add(multiPivot);
 
+function isRulerPointObject(obj) {
+    return !!obj?.userData?.isRulerPoint;
+}
+
+function applySelectionScale(obj, scaleVec) {
+    if (!obj || !scaleVec) return;
+    if (isRulerPointObject(obj)) {
+        obj.scale.set(1, 1, 1);
+        return;
+    }
+    obj.scale.set(scaleVec.x, scaleVec.y, 2);
+    GizmoUI.correctLabelScale(obj, params.labelFontSize);
+}
+
+function resetSelectionScale(obj) {
+    if (!obj) return;
+    if (isRulerPointObject(obj)) {
+        obj.scale.set(1, 1, 1);
+        return;
+    }
+    obj.scale.set(2, 2, 2);
+    GizmoUI.correctLabelScale(obj, params.labelFontSize);
+}
+
 // === Apply transforms from bottom HUD inputs to single or multi-selection ===
 function applyDirectFromUI(op) {
     const gizObj = GizmoUI.tcontrols.main.object;
@@ -359,9 +416,7 @@ function applyDirectFromUI(op) {
             local.decompose(pos, quat, scl);
             obj.position.copy(pos);
             obj.quaternion.copy(quat);
-            // Keep thickness fixed and labels consistent
-            obj.scale.set(scl.x, scl.y, 2);
-            GizmoUI.correctLabelScale(obj, params.labelFontSize);
+            applySelectionScale(obj, scl);
         }
         doRecompute();
         refreshAfterRecompute();
@@ -379,16 +434,17 @@ function applyDirectFromUI(op) {
             if (op.axis === 'tilt') e.x = THREE.MathUtils.degToRad(op.value);
             gizObj.setRotationFromEuler(e);
         } else if (op.kind === 'scale') {
-            if (op.axis === 'x') gizObj.scale.x = op.value;
-            if (op.axis === 'y') gizObj.scale.y = op.value;
-            GizmoUI.correctLabelScale(gizObj, params.labelFontSize);
+            if (isRulerPointObject(gizObj)) {
+                gizObj.scale.setScalar(1);
+            } else {
+                if (op.axis === 'x') gizObj.scale.x = op.value;
+                if (op.axis === 'y') gizObj.scale.y = op.value;
+                GizmoUI.correctLabelScale(gizObj, params.labelFontSize);
+            }
         } else if (op.kind === 'scaleReset') {
-            gizObj.scale.set(2,2,2);
-            GizmoUI.correctLabelScale(gizObj, params.labelFontSize);
+            resetSelectionScale(gizObj);
         }
 
-        // START of ADDED CODE
-        // After any scale change from the UI, apply mirror-specific logic
         if (op.kind === 'scale' || op.kind === 'scaleReset') {
             const tag = gizObj.userData?.element;
             if (tag?.type === 'mirror') {
@@ -397,8 +453,11 @@ function applyDirectFromUI(op) {
                 }
                 refreshMirrorVisual(tag);
             }
+            if (tag?.type === 'thickLens') {
+                clampThickLensSizeToR(gizObj, tag.props.R1, tag.props.R2);
+                refreshThickLensVisual(tag);
+            }
         }
-        // END of ADDED CODE
 
         doRecompute(); refreshAfterRecompute(); State.pushHistory(); refreshSelectedUI();
         return;
@@ -488,6 +547,10 @@ function addElement(el, pos) {
     } else if (el.mesh.position.lengthSq() === 0) {
         const k = elements.length;
         el.mesh.position.set((k % 3 - 1) * 0.006, 0, -0.01 + 0.009 * k);
+    }
+    if (el.type === 'thickLens') {
+        clampThickLensSizeToR(el.mesh, el.props.R1, el.props.R2);
+        refreshThickLensVisual(el);
     }
     tcontrols.attach(el.mesh);
     if (el.ugi?.handle) { ugiPickables.push(el.ugi.handle); }
@@ -608,7 +671,7 @@ function _applyDelta(ctrl) {
   const tmp = new THREE.Matrix4(), local = new THREE.Matrix4();
   const pos = new THREE.Vector3(), quat = new THREE.Quaternion(), scl = new THREE.Vector3();
 
-  for (const ent of _multiStart.entries) {
+    for (const ent of _multiStart.entries) {
     // newWorld = delta * startWorld
     const newWorld = tmp.multiplyMatrices(delta, ent.worldStart);
     // Convert world matrix to local under current parent
@@ -617,10 +680,8 @@ function _applyDelta(ctrl) {
     local.decompose(pos, quat, scl);
     ent.obj.position.copy(pos);
     ent.obj.quaternion.copy(quat);
-    // Keep Z scale fixed for 2D-ish elements as in your single-object code
     if (ctrl.mode === 'scale') {
-      ent.obj.scale.set(scl.x, scl.y, 2);
-      GizmoUI.correctLabelScale(ent.obj, params.labelFontSize);
+      applySelectionScale(ent.obj, scl);
     } else {
       ent.obj.scale.copy(scl);
     }
@@ -649,6 +710,7 @@ Object.values(GizmoUI.tcontrols).forEach(ctrl => {
         // (existing single-object behavior)
 
         if (ctrl.object.userData?.isRulerPoint) {
+          ctrl.object.scale.set(1, 1, 1);
 
           Ruler.updateRuler();
 
@@ -664,8 +726,7 @@ Object.values(GizmoUI.tcontrols).forEach(ctrl => {
 
           }}}}
   if (ctrl.mode === 'scale') {
-    ctrl.object.scale.z = 2;
-    GizmoUI.correctLabelScale(ctrl.object, params.labelFontSize);
+    applySelectionScale(ctrl.object, ctrl.object.scale);
 
     const tag = ctrl.object.userData?.element;
     if (tag?.type === 'mirror') {
@@ -674,6 +735,10 @@ Object.values(GizmoUI.tcontrols).forEach(ctrl => {
       }
       // rebuild from *current* world size every time we scale
       refreshMirrorVisual(tag);
+    }
+    if (tag?.type === 'thickLens') {
+      clampThickLensSizeToR(ctrl.object, tag.props.R1, tag.props.R2);
+      refreshThickLensVisual(tag);
     }
   }
   refreshSelectedUI();
@@ -757,6 +822,7 @@ function duplicateSelectedElements() {
       let maker = null;
       switch (el.type) {
         case 'lens': maker = makeLens; break;
+        case 'thickLens': maker = makeThickLens; break;
         case 'mirror': maker = makeMirror; break;
         case 'polarizer': maker = makePolarizer; break;
         case 'waveplate': maker = makeWaveplate; break;
@@ -772,6 +838,8 @@ function duplicateSelectedElements() {
         addElement(newEl, el.mesh.position.clone().add(offset));
         newEl.mesh.quaternion.copy(el.mesh.quaternion);
         newEl.mesh.scale.copy(el.mesh.scale);
+        if (newEl.type === 'mirror') refreshMirrorVisual(newEl);
+        if (newEl.type === 'thickLens') refreshThickLensVisual(newEl);
         GizmoUI.correctLabelScale(newEl.mesh, params.labelFontSize);
         newSelection.push(newEl.mesh);
       }
@@ -812,9 +880,93 @@ const meterLastInfo = new Map();
 const elementLastInfo = new Map();
 
 /* ========= Polarization ellipse helper ========= */
-function svgPolEllipse(psiDeg, chiDeg) {
-    const a = 46, chiRad = (chiDeg || 0) * Math.PI / 180, b = Math.max(1, a * Math.abs(Math.tan(chiRad)));
-    return `<svg width="160" height="120" viewBox="-80 -60 160 120" xmlns="http://www.w3.org/2000/svg"><style>.axis{stroke:#7d8590;stroke-width:1}.ell{stroke:#e6edf3;stroke-width:2;fill:none}.box{fill:none;stroke:#30363d;stroke-width:1}</style><line class="axis" x1="-64" y1="0" x2="64" y2="0"/><line class="axis" x1="0" y1="-44" x2="0" y2="44"/><g transform="rotate(${(-(psiDeg || 0)).toFixed(2)})"><ellipse class="ell" cx="0" cy="0" rx="${a}" ry="${b}"/></g><rect class="box" x="-75" y="-55" width="150" height="110" rx="6" ry="6"/></svg>`;
+function dominantAxisLabel(vec) {
+    const comps = [
+        { label: vec.x >= 0 ? '+X' : '-X', mag: Math.abs(vec.x) },
+        { label: vec.y >= 0 ? '+Y' : '-Y', mag: Math.abs(vec.y) },
+        { label: vec.z >= 0 ? '+Z' : '-Z', mag: Math.abs(vec.z) }
+    ];
+    comps.sort((a, b) => b.mag - a.mag);
+    return comps[0].label;
+}
+
+function svgPolEllipse(info) {
+    const J = info?.jones;
+    const dir = info?.outgoingDir;
+    if (!Array.isArray(J) || J.length < 2) {
+        const psiDeg = info?.psi_deg ?? info?.psiDeg ?? 0;
+        const chiDeg = info?.chi_deg ?? info?.chiDeg ?? 0;
+        const a = 46;
+        const chiRad = chiDeg * Math.PI / 180;
+        const b = Math.max(1, a * Math.abs(Math.tan(chiRad)));
+        return `<svg width="160" height="120" viewBox="-80 -60 160 120" xmlns="http://www.w3.org/2000/svg"><style>.axis{stroke:#7d8590;stroke-width:1}.ell{stroke:#e6edf3;stroke-width:2;fill:none}.box{fill:none;stroke:#30363d;stroke-width:1}</style><line class="axis" x1="-64" y1="0" x2="64" y2="0"/><line class="axis" x1="0" y1="-44" x2="0" y2="44"/><g transform="rotate(${(-psiDeg).toFixed(2)})"><ellipse class="ell" cx="0" cy="0" rx="${a}" ry="${b}"/></g><rect class="box" x="-75" y="-55" width="150" height="110" rx="6" ry="6"/></svg>`;
+    }
+
+    const samples = 96;
+    const points = [];
+    let maxAbs = 1e-6;
+    for (let i = 0; i <= samples; i++) {
+        const phase = (i / samples) * Math.PI * 2;
+        const c = Math.cos(phase);
+        const s = Math.sin(phase);
+        const x = J[0].re * c + J[0].im * s;
+        const y = J[1].re * c + J[1].im * s;
+        points.push([x, y]);
+        maxAbs = Math.max(maxAbs, Math.abs(x), Math.abs(y));
+    }
+
+    const scale = 46 / maxAbs;
+    const pathD = points.map(([x, y], idx) =>
+        `${idx === 0 ? 'M' : 'L'} ${(x * scale).toFixed(2)} ${(-y * scale).toFixed(2)}`
+    ).join(' ');
+
+    let axisLabels = '';
+    if (dir?.isVector3) {
+        const { u, v } = buildTransverseBasis(dir);
+        axisLabels = [
+            `<text x="66" y="-4" fill="#7d8590" font-size="10" text-anchor="start">H≈${dominantAxisLabel(v)}</text>`,
+            `<text x="4" y="-48" fill="#7d8590" font-size="10" text-anchor="start">V≈${dominantAxisLabel(u)}</text>`
+        ].join('');
+    }
+
+    return `<svg width="160" height="120" viewBox="-80 -60 160 120" xmlns="http://www.w3.org/2000/svg"><style>.axis{stroke:#7d8590;stroke-width:1}.ell{stroke:#e6edf3;stroke-width:2;fill:none}.box{fill:none;stroke:#30363d;stroke-width:1}</style><line class="axis" x1="-64" y1="0" x2="64" y2="0"/><line class="axis" x1="0" y1="-44" x2="0" y2="44"/><path class="ell" d="${pathD}"/><rect class="box" x="-75" y="-55" width="150" height="110" rx="6" ry="6"/>${axisLabels}</svg>`;
+}
+
+function svgPolEllipsePanel(info) {
+    const J = info?.jones;
+    const dir = info?.outgoingDir;
+    if (!Array.isArray(J) || J.length < 2) {
+        return svgPolEllipse(info);
+    }
+
+    const samples = 96;
+    const points = [];
+    let maxAbs = 1e-6;
+    for (let i = 0; i <= samples; i++) {
+        const phase = (i / samples) * Math.PI * 2;
+        const c = Math.cos(phase);
+        const s = Math.sin(phase);
+        const x = J[0].re * c + J[0].im * s;
+        const y = J[1].re * c + J[1].im * s;
+        points.push([x, y]);
+        maxAbs = Math.max(maxAbs, Math.abs(x), Math.abs(y));
+    }
+
+    const scale = 46 / maxAbs;
+    const pathD = points.map(([x, y], idx) =>
+        `${idx === 0 ? 'M' : 'L'} ${(x * scale).toFixed(2)} ${(-y * scale).toFixed(2)}`
+    ).join(' ');
+
+    let axisLabels = '';
+    if (dir?.isVector3) {
+        const { u, v } = buildTransverseBasis(dir);
+        axisLabels = [
+            `<text x="72" y="-2" fill="#7d8590" font-size="10" text-anchor="end" dominant-baseline="middle">H&#8776;${dominantAxisLabel(v)}</text>`,
+            `<text x="0" y="-50" fill="#7d8590" font-size="10" text-anchor="middle">V&#8776;${dominantAxisLabel(u)}</text>`
+        ].join('');
+    }
+
+    return `<svg width="160" height="120" viewBox="-80 -60 160 120" xmlns="http://www.w3.org/2000/svg"><style>.axis{stroke:#7d8590;stroke-width:1}.ell{stroke:#e6edf3;stroke-width:2;fill:none}.box{fill:none;stroke:#30363d;stroke-width:1}</style><line class="axis" x1="-64" y1="0" x2="64" y2="0"/><line class="axis" x1="0" y1="-44" x2="0" y2="44"/><path class="ell" d="${pathD}"/><rect class="box" x="-75" y="-55" width="150" height="110" rx="6" ry="6"/>${axisLabels}</svg>`;
 }
 
 /* ========= Selected element panel ========= */
@@ -975,7 +1127,7 @@ function refreshSelectedUI() {
             holder.style.display = 'flex';
             holder.style.justifyContent = 'center';
             holder.style.alignItems = 'center';
-            holder.innerHTML = svgPolEllipse(psi, chi);
+            holder.innerHTML = svgPolEllipsePanel(info);
 
             // Remove previous holders we added (if any) and append
             try {
@@ -1041,6 +1193,71 @@ function refreshSelectedUI() {
             ui.f_mm = e.props.f * 1e3;
             live(elFolder.add(ui, "f_mm", -10000, 10000, 0.1).name("f (mm)"),
                 v => { e.props.f = Number(v) * 1e-3; updateElementLabel(e); GizmoUI.correctLabelScale(e.mesh, params.labelFontSize); doRecompute(); });
+        }
+    }
+
+    // Thick Lens
+    if (tag?.type === "thickLens") {
+        const e = elements.find(x => x.mesh === selObj); if (e) {
+            refreshThickLensVisual(e);
+
+            ui.tl_R1_mm = (Number(e.props.R1) || 0) * 1e3;
+            ui.tl_R2_mm = (Number(e.props.R2) || 0) * 1e3;
+            ui.tl_n = Number.isFinite(Number(e.props.n)) ? Number(e.props.n) : 1.5;
+
+            let tMin_m = Math.max(1e-6, Number(e.props._thicknessMin) || 1e-6);
+            let tCur_m = Number(e.props.thickness);
+            if (!Number.isFinite(tCur_m) || tCur_m < tMin_m) {
+                tCur_m = Math.max(tMin_m, 0.004);
+                e.props.thickness = tCur_m;
+                refreshThickLensVisual(e);
+                tMin_m = Math.max(1e-6, Number(e.props._thicknessMin) || 1e-6);
+            }
+            const tCur_mm = tCur_m * 1e3;
+            const tMin_mm = tMin_m * 1e3;
+            const tMax_mm = Math.max(tCur_mm * 3, tMin_mm + 0.1, 50);
+            ui.tl_thick_mm = tCur_mm;
+
+            live(elFolder.add(ui, "tl_R1_mm", -20000, 20000, 0.1).name("R1 (mm)"),
+                v => {
+                    e.props.R1 = Number(v) * 1e-3;
+                    clampThickLensSizeToR(e.mesh, e.props.R1, e.props.R2);
+                    refreshThickLensVisual(e);
+                    updateElementLabel(e);
+                    GizmoUI.correctLabelScale(e.mesh, params.labelFontSize);
+                    doRecompute();
+                });
+
+            live(elFolder.add(ui, "tl_R2_mm", -20000, 20000, 0.1).name("R2 (mm)"),
+                v => {
+                    e.props.R2 = Number(v) * 1e-3;
+                    clampThickLensSizeToR(e.mesh, e.props.R1, e.props.R2);
+                    refreshThickLensVisual(e);
+                    updateElementLabel(e);
+                    GizmoUI.correctLabelScale(e.mesh, params.labelFontSize);
+                    doRecompute();
+                });
+
+            live(elFolder.add(ui, "tl_n").name("Index n"),
+                v => {
+                    const nVal = Number(v);
+                    e.props.n = (Number.isFinite(nVal) && nVal > 0) ? nVal : 1.5;
+                    updateElementLabel(e);
+                    GizmoUI.correctLabelScale(e.mesh, params.labelFontSize);
+                    doRecompute();
+                });
+
+            live(elFolder.add(ui, "tl_thick_mm", tMin_mm, tMax_mm, 0.01).name("Thickness (mm)"),
+                v => {
+                    const tMinLocal_m = Math.max(1e-6, Number(e.props._thicknessMin) || 1e-6);
+                    let t_m = Number(v) * 1e-3;
+                    t_m = Math.max(tMinLocal_m, t_m);
+                    e.props.thickness = t_m;
+                    refreshThickLensVisual(e);
+                    updateElementLabel(e);
+                    GizmoUI.correctLabelScale(e.mesh, params.labelFontSize);
+                    doRecompute();
+                });
         }
     }
 
@@ -1447,7 +1664,7 @@ if (tag?.type === "mirror") {
 
 // A map of functions for recreating elements from their type string, needed by state.js
 const recreateFuncs = {
-    'lens': makeLens, 'mirror': makeMirror, 'polarizer': makePolarizer,
+    'lens': makeLens, 'thickLens': makeThickLens, 'mirror': makeMirror, 'polarizer': makePolarizer,
     'waveplate': makeWaveplate, 'faraday': makeFaraday, 'beamSplitter': makeBeamSplitter,
     'beamBlock': makeBeamBlock, 'grating': makeGrating, 'multimeter': makeMultimeter
 };
@@ -1458,7 +1675,7 @@ State.init({
     doRecompute, refreshSelectedUI,
     Ruler, GizmoUI,
     beamWidthScaleController, showGridController, showLabelsController, labelFontSizeController,
-    recreateFuncs, refreshMirrorVisual
+    recreateFuncs, refreshMirrorVisual, refreshThickLensVisual
 });
 
 /* ========= Demo ========= */
