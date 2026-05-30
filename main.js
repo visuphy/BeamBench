@@ -22,7 +22,7 @@ import {
   refreshMirrorVisual, refreshThickLensVisual
 } from './elements.js?v=1.0.7';
 import * as pol from './polarization.js?v=1.0.7';
-import * as Propagation from './propagation.js?v=1.0.8';
+import * as Propagation from './propagation.js?v=1.0.11';
 import { buildTransverseBasis } from './beam-frame.js?v=1.0.7';
 
 /* ========= Scene ========= */
