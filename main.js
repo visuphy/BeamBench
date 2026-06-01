@@ -5,14 +5,14 @@
 
 // main.js — scene, GUI, multi-source Gaussian propagation with multimeter, gratings, PBS, unified mirror, dichroic, blocks, broadband sources
 import * as THREE from 'three';
-import { OrbitControls } from 'three/addons/controls/OrbitControls.js?v=1.0.1';
+import { OrbitControls } from 'three/addons/controls/OrbitControls.js?v=1.0.15';
 import GUI from 'https://cdn.jsdelivr.net/npm/lil-gui@0.18/+esm';
 
 // Import local modules
-import * as GizmoUI from './gizmo-ui.js?v=1.0.1';
-import * as Ruler from './ruler.js?v=1.0.1';
-import * as State from './state.js?v=1.0.1';
-import * as Sources from './sources.js?v=1.0.1';
+import * as GizmoUI from './gizmo-ui.js?v=1.0.15';
+import * as Ruler from './ruler.js?v=1.0.15';
+import * as State from './state.js?v=1.0.15';
+import * as Sources from './sources.js?v=1.0.15';
 import {
   clampToPlaneXZ,
   makeLens, makeThickLens, makeMirror, makeMultimeter,
@@ -20,10 +20,10 @@ import {
   makeBeamSplitter, makeBeamBlock, makeGrating,
   updateElementLabel,
   refreshMirrorVisual, refreshThickLensVisual
-} from './elements.js?v=1.0.7';
-import * as pol from './polarization.js?v=1.0.7';
-import * as Propagation from './propagation.js?v=1.0.11';
-import { buildTransverseBasis } from './beam-frame.js?v=1.0.7';
+} from './elements.js?v=1.0.15';
+import * as pol from './polarization.js?v=1.0.15';
+import * as Propagation from './propagation.js?v=1.0.15';
+import { buildTransverseBasis } from './beam-frame.js?v=1.0.15';
 
 /* ========= Scene ========= */
 const app = document.getElementById('app');
@@ -689,6 +689,7 @@ function _applyDelta(ctrl) {
   // Keep recomputation/UI in sync
   refreshSelectedUI();
   doRecompute();
+  refreshAfterRecompute();
 }
 
 Object.values(GizmoUI.tcontrols).forEach(ctrl => {
@@ -743,12 +744,14 @@ Object.values(GizmoUI.tcontrols).forEach(ctrl => {
   }
   refreshSelectedUI();
   doRecompute();
+  refreshAfterRecompute();
 });
 
 
   ctrl.addEventListener('mouseUp', () => {
     if (ctrl.object?.userData?.isRulerPoint) Ruler.updateRuler();
     refreshSelectedUI();
+    refreshAfterRecompute();
     State.pushHistory();
     _multiStart = null;
   });
@@ -922,8 +925,7 @@ function svgPolEllipse(info) {
 
     let axisLabels = '';
     if (dir?.isVector3) {
-        const preferredUp = info?.basisHint?.isVector3 ? info.basisHint : undefined;
-        const { u, v } = buildTransverseBasis(dir, preferredUp);
+        const { u, v } = buildTransverseBasis(dir, info?.basisUp);
         axisLabels = [
             `<text x="66" y="-4" fill="#7d8590" font-size="10" text-anchor="start">H≈${dominantAxisLabel(v)}</text>`,
             `<text x="4" y="-48" fill="#7d8590" font-size="10" text-anchor="start">V≈${dominantAxisLabel(u)}</text>`
@@ -960,8 +962,7 @@ function svgPolEllipsePanel(info) {
 
     let axisLabels = '';
     if (dir?.isVector3) {
-        const preferredUp = info?.basisHint?.isVector3 ? info.basisHint : undefined;
-        const { u, v } = buildTransverseBasis(dir, preferredUp);
+        const { u, v } = buildTransverseBasis(dir, info?.basisUp);
         axisLabels = [
             `<text x="72" y="-2" fill="#7d8590" font-size="10" text-anchor="end" dominant-baseline="middle">H&#8776;${dominantAxisLabel(v)}</text>`,
             `<text x="0" y="-50" fill="#7d8590" font-size="10" text-anchor="middle">V&#8776;${dominantAxisLabel(u)}</text>`

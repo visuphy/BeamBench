@@ -5,7 +5,7 @@
 
 // gizmo-ui.js — Manages TransformControls and the associated bottom HUD.
 import * as THREE from 'three';
-import { TransformControls } from 'three/addons/controls/TransformControls.js?v=1.0.1';
+import { TransformControls } from 'three/addons/controls/TransformControls.js?v=1.0.15';
 
 let currentGizmoMode = 'translate'; // 'translate', 'rotate', or 'scale'
 let gizmoControlsUI = null;
